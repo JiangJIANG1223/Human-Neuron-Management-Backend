@@ -41,7 +41,7 @@ import logging
 
 
 app = FastAPI()
-
+# 23333
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
