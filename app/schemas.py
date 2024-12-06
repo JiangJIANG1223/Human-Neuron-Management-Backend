@@ -43,6 +43,7 @@ class Report(BaseModel):
 # 定义一个基础模型 HumanSingleCellTrackingTableBase，用于存储公共字段
 class HumanSingleCellTrackingTableBase(BaseModel):
     # id: int
+    injection_id: Optional[str] = None
     cell_id: str
     # tissue_id: Optional[str] = None
     # slice_id: Optional[str] = None
@@ -82,10 +83,14 @@ class HumanSingleCellTrackingTableBase(BaseModel):
     immunohistochemistry: Optional[str] = None
     first_antibody_concentration: Optional[str] = None
     secondary_antibody_band: Optional[str] = None
+    image_device: Optional[str] = None
     dapi_concentration: Optional[str] = None
     laser_wavelength: Optional[str] = None
     laser_power: Optional[str] = None
     laser_power_ratio: Optional[str] = None
+    gain: Optional[str] = None   ### 新增
+    scanner: Optional[str] = None    ### 新增
+    averaging: Optional[str] = None    ### 新增
     pmt_voltage: Optional[str] = None
     z_size: Optional[str] = None
     tiling: Optional[str] = None
@@ -159,6 +164,10 @@ class SampleInfoBase(BaseModel):
     treatment_naive: Optional[str] = None
     treatment_received: Optional[str] = None
     pathological_diagnosis: Optional[str] = None
+
+    sample_snapshot: Optional[str] = None
+    sample_image: Optional[str] = None
+    sample_annotation: Optional[str] = None
 
     class Config:
         orm_mode = True

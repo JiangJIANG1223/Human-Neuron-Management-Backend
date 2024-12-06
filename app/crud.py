@@ -79,8 +79,6 @@ def get_default_values(db: Session):
         "last_record": last_record_dict
     }
 
-from sqlalchemy import cast, Integer
-
 def get_default_info(db: Session):
     last_record = db.query(models.Sample_Information).filter(models.Sample_Information.total_id != '--').order_by(cast(models.Sample_Information.total_id, Integer).desc()).first()
     
@@ -104,7 +102,11 @@ def get_valid_samples(db: Session):
     return valid_samples
 
 def get_total_regions(db: Session):
-    return db.query(models.HumanSingleCellTrackingTable.brain_region).distinct().count()
+    return db.query(models.HumanSingleCellTrackingTable.brain_region).filter(
+        models.HumanSingleCellTrackingTable.brain_region != '',
+        models.HumanSingleCellTrackingTable.brain_region != '-',
+        models.HumanSingleCellTrackingTable.brain_region != '--',
+    ).distinct().count()
     # return db.query(models.Sample_Information.english_abbr_nj).filter(
     #     models.Sample_Information.english_abbr_nj != '--').distinct().count()
 
@@ -164,3 +166,5 @@ def create_user_log(db: Session, user_id: int, action: str, details: dict = None
     db.commit()
     db.refresh(log)
     return log
+
+

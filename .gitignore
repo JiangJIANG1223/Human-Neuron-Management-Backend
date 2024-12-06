@@ -18,3 +18,15 @@ SearchTable.csv
 encode_password.py
 /Record_Book_Pics
 swc_visualization.py
+app/database.py
+/Injection_Files
+/DB_Uploads
+/shooting_Files
+import_image_info.py
+/Imaging_Files/Markers
+/mnt/nfs/hndb/Shooting_Files
+/mnt/nfs/hndb/Imaging_Files
+*.csv
+*.py
+/Imaging_Files
+app/database.py

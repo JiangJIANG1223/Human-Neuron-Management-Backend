@@ -1,14 +1,15 @@
 # FastAPI应用的入口，包含路由定义和数据库连接配置
+import mimetypes
 import shutil
 import cv2
 import imageio
 import numpy as np
-from fastapi import FastAPI, Depends, HTTPException, Query, File, UploadFile, Form
+from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, Header, Request, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import func, desc, asc, Integer, create_engine, MetaData, Table, update, select, insert, cast
 from fastapi.middleware.cors import CORSMiddleware
-from . import models, schemas, crud
+from . import models, schemas, crud, foundPBD
 from .database import SessionLocal
 from fastapi.staticfiles import StaticFiles
 import logging
@@ -21,24 +22,22 @@ from fastapi_jwt_auth import AuthJWT
 from fastapi_jwt_auth.exceptions import AuthJWTException
 from passlib.context import CryptContext
 from fastapi.responses import JSONResponse
-from sqlalchemy import desc
 import uvicorn
 import json
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 import zipfile
-from sqlalchemy import asc
 import aiofiles
 import shutil
-from collections import OrderedDict
-import zipfile
 import sys
 from pydantic import BaseModel
-from sqlalchemy import create_engine, MetaData, Table, update, select
-from sqlalchemy.orm import sessionmaker
 import pandas as pd
 import matplotlib.pyplot as plt
-import logging
-
+import re
+from sqlalchemy.exc import SQLAlchemyError
+import redis
+import openai
+import parsedatetime
+import spacy
 
 app = FastAPI()
 
@@ -50,15 +49,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 挂载 MIP_Downsample 目录
-# app.mount("/MIP_Downsample", StaticFiles(directory="./MIP_Downsample"), name="MIP_Downsample")
-
 # 挂载 static 目录，服务静态文件
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Database connection URL
-#DATABASE_URL = "mysql+pymysql://root:braintell%40seu@localhost/Human_Neuron"
-DATABASE_URL = "mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron"
 
 # Dependency to get the DB session
 def get_db():
@@ -81,7 +73,320 @@ def authjwt_exception_handler(request, exc):
 @AuthJWT.load_config
 def get_config():
     return schemas.Settings()
+'''**********************************样本图像数据统计*****************************************'''
+@app.post("/api/generate_sample_xlsx")
+async def generate_xlsx(request: Request, db: Session = Depends(get_db)):
+    request_data = await request.json()
+    hospital_name = request_data.get('hospital')
+    print(type(hospital_name), hospital_name, 1 if not hospital_name else 0)
 
+    # 从数据库中查找样本
+    hossamples = db.query(models.Sample_Information).all()
+    if (not hospital_name) or (hospital_name is None) or (hospital_name == '') or (hospital_name == 'none'):
+        samples = [sample for sample in hossamples]
+    else:
+        # 筛选出符合条件的样本
+        samples = [
+            sample for sample in hossamples
+            if '-'.join(sample.sample_id.split('-')[:2]) == hospital_name
+        ]
+
+    # 准备 XLSX 数据
+    xlsx_data = {
+        "hospital": [],  # 添加医院列
+        "sample_id": [],
+        "loss": [],
+        "sample_snapshot": [],
+        "sample_image": [],
+        "sample_annotation": []
+    }
+
+    for sample in samples:
+        sample_id = sample.sample_id
+        sample_snapshot = sample.sample_snapshot
+        sample_image = sample.sample_image
+        sample_annotation = sample.sample_annotation
+
+        # 填充医院列
+        hospital_value = '-'.join(sample_id.split('-')[:2])
+        xlsx_data["hospital"].append(hospital_value)
+
+        # 填充 sample_id
+        xlsx_data["sample_id"].append(sample_id)
+
+        # 处理 snapshot, image, annotation，检查是否为 None 或空
+        xlsx_data["sample_snapshot"].append(0 if (sample_snapshot is None or sample_snapshot == '') else 1)
+        xlsx_data["sample_image"].append(0 if (sample_image is None or sample_image == '') else 1)
+        xlsx_data["sample_annotation"].append(0 if (sample_annotation is None or sample_annotation == '') else 1)
+
+        # 计算 loss
+        loss = 0 if ((sample_snapshot is None or sample_snapshot == '') or
+                     (sample_image is None or sample_image == '') or (sample_annotation is None or sample_annotation == '')) else 1
+        xlsx_data["loss"].append(loss)
+
+    # 创建 DataFrame
+    df = pd.DataFrame(xlsx_data)
+
+    # 使用 with open 写入 XLSX
+    xlsx_file_path = 'sample_data.xlsx'
+    df.to_excel(xlsx_file_path, index=False)
+
+    return StreamingResponse(open(xlsx_file_path, mode='rb'), media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                             headers={'Content-Disposition': 'attachment; filename=sample_data.xlsx'})
+
+
+'''**********************************样本信息上传*********************************************
+新增三列
+    sample_snapshot = Column("sample_snapshot", String(255))
+    sample_image = Column("sample_image", String(255))
+    sample_annotation = Column("sample_annotation", String(255))
+
+**************************'''
+
+
+@app.post("/api/Upload_Sample_snapshot")
+async def Upload_Sample_snapshot(folderName: str = Form(...), sample_idx: int = Form(...),
+                                 files: list[UploadFile] = File(...),  Authorize: AuthJWT = Depends(), db: Session = Depends(get_db)):
+
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()  # 确保 user_id 是整数类型
+
+    # 按照'-'分割字符串
+    parts = folderName.split('-')
+    # 判断第一个元素是否是数字
+    if parts[0].isdigit():
+        # 如果是数字，则只保留剩下的部分
+        realfolderName = '-'.join(parts[1:])
+    else:
+        # 否则，直接打印原字符串
+        realfolderName = folderName
+
+    details = f"{str(sample_idx)}_{realfolderName}_sample_snapshot"
+    crud.create_user_log(db, int(user_id), action=f"upload sample snapshot",
+                         details=details)
+
+    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_snapshot"
+    os.makedirs(base_upload_dir, exist_ok=True)
+    responses = []
+    for file in files:
+        # 使用 webkitRelativePath 获取相对路径，假设文件名为 "folderName/innerFolder/file.txt"
+        relative_path = file.filename.split('/', 1)[-1]  # 跳过最外层文件夹
+
+        file_location = os.path.join(base_upload_dir, relative_path)
+        os.makedirs(os.path.dirname(file_location), exist_ok=True)
+
+        with open(file_location, "wb+") as file_object:
+            file_object.write(await file.read())
+
+        responses.append(file_location)
+
+        # 在数据库中更新条目
+    db.query(models.Sample_Information) \
+        .filter(models.Sample_Information.idx == sample_idx) \
+        .update({models.Sample_Information.sample_snapshot: realfolderName})
+    # 提交更改到数据库
+    db.commit()
+    return JSONResponse(content={"message": "Upload successful!", "files": responses})
+
+
+@app.post("/api/Upload_Sample_image")
+async def Upload_Sample_image(folderName: str = Form(...), sample_idx: int = Form(...),
+                              files: list[UploadFile] = File(...),  Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()  # 确保 user_id 是整数类型
+
+    # 按照'-'分割字符串
+    parts = folderName.split('-')
+    # 判断第一个元素是否是数字
+    if parts[0].isdigit():
+        # 如果是数字，则只保留剩下的部分
+        realfolderName = '-'.join(parts[1:])
+    else:
+        # 否则，直接打印原字符串
+        realfolderName = folderName
+
+    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_image"
+    os.makedirs(base_upload_dir, exist_ok=True)
+    responses = []
+    for file in files:
+        # 使用 webkitRelativePath 获取相对路径，假设文件名为 "folderName/innerFolder/file.txt"
+        relative_path = file.filename.split('/', 1)[-1]  # 跳过最外层文件夹
+
+        file_location = os.path.join(base_upload_dir, relative_path)
+        os.makedirs(os.path.dirname(file_location), exist_ok=True)
+
+        with open(file_location, "wb+") as file_object:
+            file_object.write(await file.read())
+
+        responses.append(file_location)
+
+        # 在数据库中更新条目
+    db.query(models.Sample_Information) \
+        .filter(models.Sample_Information.idx == sample_idx) \
+        .update({models.Sample_Information.sample_image: realfolderName})
+    # 提交更改到数据库
+    db.commit()
+
+
+    details = f"{str(sample_idx)}_{realfolderName}_sample_image"
+    crud.create_user_log(db, int(user_id), action=f"upload sample image",
+                         details=details)
+
+    return JSONResponse(content={"message": "Upload successful!", "files": responses})
+
+
+@app.post("/api/Upload_Sample_annoation")
+async def Upload_Sample_annoation(folderName: str = Form(...), sample_idx: int = Form(...),
+                                  files: list[UploadFile] = File(...),  Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()  # 确保 user_id 是整数类型
+
+    # 按照'-'分割字符串
+    parts = folderName.split('-')
+    # 判断第一个元素是否是数字
+    if parts[0].isdigit():
+        # 如果是数字，则只保留剩下的部分
+        realfolderName = '-'.join(parts[1:])
+    else:
+        # 否则，直接打印原字符串
+        realfolderName = folderName
+
+    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_annoation"
+    os.makedirs(base_upload_dir, exist_ok=True)
+    responses = []
+    for file in files:
+        # 使用 webkitRelativePath 获取相对路径，假设文件名为 "folderName/innerFolder/file.txt"
+        relative_path = file.filename.split('/', 1)[-1]  # 跳过最外层文件夹
+
+        file_location = os.path.join(base_upload_dir, relative_path)
+        os.makedirs(os.path.dirname(file_location), exist_ok=True)
+
+        with open(file_location, "wb+") as file_object:
+            file_object.write(await file.read())
+
+        responses.append(file_location)
+
+        # 在数据库中更新条目
+    db.query(models.Sample_Information) \
+        .filter(models.Sample_Information.idx == sample_idx) \
+        .update({models.Sample_Information.sample_annotation: realfolderName})
+    # 提交更改到数据库
+    db.commit()
+
+    details = f"{str(sample_idx)}_{realfolderName}_sample_annotation"
+    crud.create_user_log(db, int(user_id), action=f"upload sample annotation",
+                         details=details)
+    return JSONResponse(content={"message": "Upload successful!", "files": responses})
+
+
+'''**********************************样本信息下载*********************************************'''
+@app.post("/api/sample_download/")
+async def download_sample_file(request: Request):
+    # 从请求体中获取 JSON 数据
+    data = await request.json()
+    idx = data.get("idx")  # 获取 idx 参数
+    print(idx)
+
+    # 确定要搜索的根文件夹路径
+    root_dir = r"/mnt/nfs/hndb/Sample_Files"
+    temp_dir = r"/mnt/nfs/hndb/temp/Sample_temp"
+
+    # 检查匹配的文件夹
+    matched_folder_paths = []  # 使用列表存储匹配的文件夹路径
+    for folder_name in os.listdir(root_dir):
+        if folder_name.split('_')[0] == str(idx):
+            matched_folder_paths.append(os.path.join(root_dir, folder_name))  # 添加匹配的文件夹路径
+
+    # 检查是否找到匹配的文件夹
+    if not matched_folder_paths:
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+        # 使用临时文件夹保存 ZIP 文件
+    zip_file_path = os.path.join(temp_dir, f"sample_files_{idx}.zip")
+
+    # 创建 ZIP 文件并压缩所有匹配的文件夹内容
+    print("创建 ZIP 文件")
+    with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for folder_path in matched_folder_paths:
+            for root, _, files in os.walk(folder_path):
+                for file in files:
+                    # 创建相对路径以保持目录结构
+                    file_path = os.path.join(root, file)
+                    arcname = os.path.relpath(file_path, start=folder_path)
+                    zipf.write(file_path, arcname)
+
+                    # 创建并返回响应
+    response = FileResponse(path=zip_file_path, filename=os.path.basename(zip_file_path), media_type='application/zip')
+    return response
+'''**********************************一类样本图像查看*********************************************'''
+@app.post("/api/view_sample_snapshots/")
+async def get_sample_snapshot(request: Request):
+    # 从请求体中获取 JSON 数据
+    data = await request.json()
+    idx = data.get("idx")  # 获取 idx 参数
+    print(idx)
+
+    FOLDER_PATH = r"/mnt/nfs/hndb/Sample_Files/"
+    # 用于存储匹配的文件夹路径
+    matched_folder_paths = []
+
+    # 检查匹配的文件夹
+    for folder_name in os.listdir(FOLDER_PATH):
+        if folder_name.split('_')[0] == str(idx):
+            matched_folder_paths.append(os.path.join(FOLDER_PATH, folder_name))  # 使用 os.path.join
+
+    image_files = []
+
+    # 遍历匹配的文件夹路径
+    for matched_folder_path in matched_folder_paths:
+        sample_snapshot_path =matched_folder_path+"/sample_snapshot"
+
+        # 检查 sample_snapshot 目录是否存在
+        if os.path.exists(sample_snapshot_path):
+            # 遍历该目录中的文件
+            for root, dirs, files in os.walk(sample_snapshot_path):
+                for file in files:
+                    if file.lower().startswith('._'):
+                        continue  # 跳过该文件
+
+                    if file.lower().endswith(('.jpg', '.jpeg')):
+                        # 构建完整的图像 URL
+                        image_url = os.path.join(root, file).replace("\\",'/')
+                        print(image_url)
+                        # 使用split方法根据 '/' 分割字符串
+                        # parts = image_url.split('/')
+                        # 找到第一个不是空字符串的索引
+                        # modified_url = '/'.join(parts[5:])  # 从索引4开始保留后面的部分
+                        # 添加文件名和 URL 的字典
+                        image_files.append({"name": file, "url": image_url})
+
+            # 找到一个有效的 sample_snapshot 后就中断遍历
+            break
+
+    image_files.sort(key=lambda x: x['name'])  # 按文件名排序
+    # 创建 JSON 响应
+    response = JSONResponse(content={"pics": image_files})
+    return response
+
+@app.post("/api/get_sample_snapshot_url")
+async def get_sample_snapshot_url(request: Request):
+    # 从请求体中获取 JSON 数据
+    data = await request.json()
+    file_path = data.get("imagefile")  # 获取图像文件路径
+    print(file_path)
+
+    # 检查文件路径是否有效
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    try:
+        # 获取文件的 MIME 类型
+        mime_type, _ = mimetypes.guess_type(file_path)
+        return FileResponse(file_path, media_type=mime_type)  # 返回文件并设置 MIME 类型
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
 '''****************************SWC可视化开始***************************'''
 def readSWC(swc_path, mode='simple'): # pandas DataFrame
     n_skip = 0
@@ -156,88 +461,38 @@ def swc2branches(swc):
             pkey=swc.loc[key,'parent']
         branches.append(branch)
     return branches
+    
+def get_swc(swc_file,image_path, cellid, db, projection_direction='xy', ignore_background=False):
+    rawID = '-'
+    soma_x = 0
+    soma_y = 0
+    soma_z = 0
 
-def show_neuron_swc(swc_path: str):
+    # Query the database using the ORM session
+    query = (
+        db.query(models.HumanSingleCellTrackingTable)  # Replace with your actual model
+            .filter(models.HumanSingleCellTrackingTable.cell_id == cellid)  # Adjust as necessary
+            .with_entities(
+            models.HumanSingleCellTrackingTable.image_cell_id,
+            models.HumanSingleCellTrackingTable.soma_x,
+            models.HumanSingleCellTrackingTable.soma_y,
+            models.HumanSingleCellTrackingTable.soma_z
+        )
+    )
 
-    """
-    Displays a neuron structure from an SWC file.
+    # Execute the query
+    result = query.first()  # Use first() to get a single result
 
-    Args:
-        swc_path (str): The path to the SWC file.
-
-    Returns:
-        matplotlib.axes.Axes: The axes containing the plot.
-    """
-    # Read the SWC file
-    swc = readSWC(swc_path)
-
-    # Get the branches of the neuron structure
-    branches = swc2branches(swc)
-    if x_size != -1 and y_size != -1:
-        # Create a new figure and axes
-        _, ax = plt.subplots(figsize=(x_size/100, y_size/100))
-    else:
-        _, ax = plt.subplots(figsize=(5.12, 5.12))
-    # Plot the neuron structure
-    colors = ['white', 'black', 'red', 'blue', 'magenta', 'green']
-    for branch in branches:
-        br_color = colors[3]
-        #br_color = colors[int(swc.loc[branch[0], 'type']) % len(colors)]
-        x_coords = [swc.loc[node, 'x'] for node in branch]
-        y_coords = [swc.loc[node, 'y'] for node in branch]
-        ax.plot(x_coords, y_coords, color=br_color)
-
-    # Set equal aspect ratio and remove axes
-    ax.set_aspect('equal')
-    ax.axis('off')
-    res=swc_path.replace(".swc",".jpg")
-    plt.savefig(res)
-    # Close the figure to free up memory
-    plt.close()
-
-    # # 调用vaa3d显示SWC
-    # vaa3d_exe = 'C://Users//kaixiang//Desktop//Vaa3D-x.1.1.2_Windows_64bit//Vaa3D-x.exe'
-    # subprocess.Popen([vaa3d_exe, swc_path])
-
-    return res
-
-def get_swc(swc_file,image_path, cellid, projection_direction='xy', ignore_background=False):
-
-    rawID='-'
-    soma_x=0
-    soma_y=0
-    soma_z=0
-    # ▒~Z▒~I▒~U▒▒~M▒▒~SURL
-    SQLALCHEMY_DATABASE_URLg = "mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron"
-    # ▒~H~[建▒~U▒▒~M▒▒~S▒~U▒~S~N
-    engineg = create_engine(SQLALCHEMY_DATABASE_URLg)
-    # ▒~H~[建MetaData对象
-    metadatag = MetaData()
-    # ▒~O~M▒~D▒~[▒▒| ~G表
-    tracking_table = Table('human_singlecell_trackingtable_20240712', metadatag, autoload_with=engineg)
-    # ▒~H~[建▒~_▒询
-    query = select(
-        tracking_table.c['Image Cell ID'],
-        tracking_table.c.soma_x,
-        tracking_table.c.soma_y,
-        tracking_table.c.soma_z
-    ).where(tracking_table.c['Cell ID'] == cellid)
-
-    # ▒~I▒▒~L▒~_▒询
-    with engineg.connect() as connection:
-        result = connection.execute(query)
-
-        # ▒~N▒▒~O~V▒~_▒询▒~S▒~^~\
-        for row in result:
-            rawID=row[0]
-            soma_x=row.soma_x
-            soma_y=row.soma_y
-            soma_z=row.soma_z
+    if result:
+        rawID = result.image_cell_id
+        soma_x = int(result.soma_x.split('.')[0])  # Convert to int after split
+        soma_y = int(result.soma_y.split('.')[0])  # Convert to int after split
+        soma_z = int(result.soma_z.split('.')[0])  # Convert to int after split
 
     background = imageio.v2.imread(image_path)
     y_size, x_size = background.shape[:2]  # 取前两维，忽略通道数
 
-    if rawID == "-":
+    if rawID == "-":  # 单细胞下
         if projection_direction == 'xy':
             projection_axes = 0
         elif projection_direction == 'xz':
@@ -315,11 +570,6 @@ def get_swc(swc_file,image_path, cellid, projection_direction='xy', ignore_backg
         mirroredImage.save(res)
         # Close the figure to free up memory
 
-
-        # # 调用vaa3d显示SWC
-        # vaa3d_exe = 'C://Users//kaixiang//Desktop//Vaa3D-x.1.1.2_Windows_64bit//Vaa3D-x.exe'
-        # subprocess.Popen([vaa3d_exe, swc_path])
-
         return res
     else:
         if projection_direction == 'xy':
@@ -335,8 +585,8 @@ def get_swc(swc_file,image_path, cellid, projection_direction='xy', ignore_backg
 
         print(y_size,x_size)
         if(soma_x!='-' and soma_y!='-'):
-            x_start = max(int(soma_x) - 256, 0)  # 886 - 256 = 630
-            y_start = max(int(soma_y) - 256, 0)  # 800 - 256 = 544
+            x_start = max(int(soma_x) - 320, 0)  # 886 - 256 = 630
+            y_start = max(int(soma_y) - 320, 0)  # 800 - 256 = 544
         else:
             x_start=0
             y_start=0
@@ -416,43 +666,17 @@ class SWCfilepath(BaseModel):
     cellid: str
 
 @app.post("/api/getSWC/")
-def get_swcimage(request: SWCfilepath):
+def get_swcimage(request: SWCfilepath, db: Session = Depends(get_db)):
     globalpath1="/mnt/nfs/hndb"
     repath=globalpath1+request.ss
     mippath=globalpath1+"/"+request.mipforswc
-    swcimage=get_swc(repath,mippath,request.cellid)
-    swcimagename=os.path.basename(swcimage).split("_")[0]
+    swcimage=get_swc(repath,mippath,request.cellid,db=db)
+    # swcimagename=os.path.basename(swcimage).split("_")[0]
     try:
         return FileResponse(swcimage)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    # # 定义数据库URL
-    # SQLALCHEMY_DATABASE_URLg = "mysql+pymysql://root:root@localhost/human_neuron"
-    #
-    # # 创建数据库引擎
-    # engineg = create_engine(SQLALCHEMY_DATABASE_URLg)
-    #
-    # # 创建MetaData对象
-    # metadatag = MetaData()
-    #
-    # # 反射目标表
-    # tracking_table = Table('human_singlecell_trackingtable_20240712', metadatag, autoload_with=engineg)
-    #
-    # # 创建会话
-    # Session = sessionmaker(bind=engineg)
-    # session = Session()
-    # stmt = (
-    #     update(tracking_table)
-    #         .where(tracking_table.c['Cell ID'] == swcimagename)  # 这里假设表中有一个主键id列
-    #         .values(swc_image=swcimage)
-    # )
-    # session.execute(stmt)
-    # # 提交事务
-    # session.commit()
-    #
-    # # 关闭会话
-    # session.close()
-    #
+
 '''***************************************************SWC可视化结束***************************************************'''
 '''***************************************MIP和SWC重叠开始*************************************'''
 class swcPoint:
@@ -554,40 +778,33 @@ def Readswc_v2(swc_name):
     #     print(point_l.p[i].s)
 
     return point_l # (swcPoint_list)
+    
+def get_mip_swc(swc_file, image, cellid, db, projection_direction='xy', ignore_background=False):
+    rawID = '-'
+    soma_x = 0
+    soma_y = 0
+    soma_z = 0
 
-def get_mip_swc(swc_file, image, cellid, projection_direction='xy', ignore_background=False):
+    # Query the database using the ORM session
+    query = (
+        db.query(models.HumanSingleCellTrackingTable)  # Replace with your actual model
+            .filter(models.HumanSingleCellTrackingTable.cell_id == cellid)  # Adjust as necessary
+            .with_entities(
+            models.HumanSingleCellTrackingTable.image_cell_id,
+            models.HumanSingleCellTrackingTable.soma_x,
+            models.HumanSingleCellTrackingTable.soma_y,
+            models.HumanSingleCellTrackingTable.soma_z
+        )
+    )
 
-    rawID='-'
-    soma_x=0
-    soma_y=0
-    soma_z=0
+    # Execute the query
+    result = query.first()  # Use first() to get a single result
 
-    # ▒~Z▒~I▒~U▒▒~M▒▒~SURL
-    SQLALCHEMY_DATABASE_URLg = "mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron"
-    # ▒~H~[建▒~U▒▒~M▒▒~S▒~U▒~S~N
-    engineg = create_engine(SQLALCHEMY_DATABASE_URLg)
-    # ▒~H~[建MetaData对象
-    metadatag = MetaData()
-    # ▒~O~M▒~D▒~[▒▒| ~G表
-    tracking_table = Table('human_singlecell_trackingtable_20240712', metadatag, autoload_with=engineg)
-    # ▒~H~[建▒~_▒询
-    query = select(
-        tracking_table.c['Image Cell ID'],
-        tracking_table.c.soma_x,
-        tracking_table.c.soma_y,
-        tracking_table.c.soma_z
-    ).where(tracking_table.c['Cell ID'] == cellid)
-
-    # ▒~I▒▒~L▒~_▒询
-    with engineg.connect() as connection:
-        result = connection.execute(query)
-
-        # ▒~N▒▒~O~V▒~_▒询▒~S▒~^~\
-        for row in result:
-            rawID=row[0]
-            soma_x=row.soma_x
-            soma_y=row.soma_y
-            soma_z=row.soma_z
+    if result:
+        rawID = result.image_cell_id
+        soma_x = int(result.soma_x.split('.')[0])  # Convert to int after split
+        soma_y = int(result.soma_y.split('.')[0])  # Convert to int after split
+        soma_z = int(result.soma_z.split('.')[0])  # Convert to int after split
     if rawID=='-':
         if projection_direction == 'xy':
             projection_axes = 0
@@ -675,8 +892,8 @@ def get_mip_swc(swc_file, image, cellid, projection_direction='xy', ignore_backg
         print(y_size,x_size)
 
         if(soma_x!='-' and soma_y!='-'):
-            x_start = max(int(soma_x) - 256, 0)  # 886 - 256 = 630
-            y_start = max(int(soma_y) - 256, 0)  # 800 - 256 = 544
+            x_start = max(int(soma_x) - 320, 0)  # 886 - 256 = 630
+            y_start = max(int(soma_y) - 320, 0)  # 800 - 256 = 544
         else:
             x_start=0
             y_start=0
@@ -747,19 +964,19 @@ class MIP_SWCfilepath(BaseModel):
     cellid: str
 
 @app.post("/api/getMIPSWC/")
-def get_mipswc_image(request: MIP_SWCfilepath):
+def get_mipswc_image(request: MIP_SWCfilepath, db: Session = Depends(get_db)):
     globalpath="/mnt/nfs/hndb"
     swc=globalpath+request.swc_file
     mip=globalpath+"/"+request.image_file
     # print(swc)
     #print(mip)
-    re=get_mip_swc(swc,mip,request.cellid)
+    re=get_mip_swc(swc,mip,request.cellid,db=db)
     finalImage=Image.fromarray(re,'RGB')
     # 顺时针旋转 180 度
     finalImage = finalImage.rotate(-180)
     # 进行水平镜像
     mirroredImage = finalImage.transpose(method=Image.FLIP_LEFT_RIGHT)
-    savepath=os.path.dirname(swc)+"/"+os.path.basename(swc).split("_")[0]+"_Combine"+".jpg"
+    savepath=os.path.dirname(swc)+"/"+os.path.basename(swc)[:5]+"_Combine"+".jpg"
     mirroredImage.save(savepath)
 
     try:
@@ -772,7 +989,7 @@ def get_mipswc_image(request: MIP_SWCfilepath):
 
 '''**************************************单个文件数据转换**************************************'''
 def find_storage_path(base_folder, filename):
-    file_number = int(filename.split('_')[0])  # 例如 "00028.txt" -> 28
+    file_number = int(filename[:5])  # 例如 "00028.txt" -> 28
 
     # 遍历基础文件夹，寻找合适的外层文件夹
     for outer_folder in os.listdir(base_folder):
@@ -805,24 +1022,7 @@ def find_storage_path(base_folder, filename):
 # # 确保 upload 目录存在
 # os.makedirs(TRANSUPLOAD_DIRECTORY, exist_ok=True)
 @app.post('/api/singleConvert/')  # 注意 API 路径前面需要加斜杠
-async def upload_file(file: UploadFile = File(...)):
-    # 定义数据库URL
-    #  SQLALCHEMY_DATABASE_URLg = "mysql+pymysql://root:root@localhost/human_neuron"
-    SQLALCHEMY_DATABASE_URLg = "mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron"
-
-    # 创建数据库引擎
-    engineg = create_engine(SQLALCHEMY_DATABASE_URLg)
-
-    # 创建MetaData对象
-    metadatag = MetaData()
-
-    # 反射目标表
-    tracking_table = Table('human_singlecell_trackingtable_20240712', metadatag, autoload_with=engineg)
-
-    # 创建会话
-    Session = sessionmaker(bind=engineg)
-    session = Session()
-
+async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = Depends(get_db)):
     # 第一步，确定上传路径
     uploadbase="/mnt/nfs/hndb/V3DRAW_16bit" # 16bit的根目录
     result_path = find_storage_path(uploadbase, file.filename)
@@ -852,12 +1052,17 @@ async def upload_file(file: UploadFile = File(...)):
 
     dbmip1=os.path.join("MIP_Downsample",result_path).replace("\\", "/")
     dbmip2=os.path.join(dbmip1,image.replace(".v3draw",'.tif')).replace("\\", "/")
-    stmt = (
-        update(tracking_table)
-            .where(tracking_table.c['Cell ID'] == image.split("_")[0])  # 这里假设表中有一个主键id列
-            .values(image_file=dbmip2)
-    )
-    session.execute(stmt)
+    # stmt = (
+    #     update(tracking_table)
+    #         .where(tracking_table.c['Cell ID'] == image[:5])  # 这里假设表中有一个主键id列
+    #         .values(image_file=dbmip2)
+    # )
+    # session.execute(stmt)
+    db.query(models.HumanSingleCellTrackingTable) \
+        .filter(models.HumanSingleCellTrackingTable.cell_id == image[:5]) \
+        .update({models.HumanSingleCellTrackingTable.image_file: dbmip2})
+    # 提交更改到数据库
+    db.commit()
 
 
     mipbase=r"/mnt/nfs/hndb/MIP_Downsample"
@@ -887,16 +1092,21 @@ async def upload_file(file: UploadFile = File(...)):
 
     dbpbd1=os.path.join("V3DPBD",result_path).replace("\\", "/")
     dbpbd2=os.path.join(dbpbd1,image.replace(".v3draw",'.v3dpbd')).replace("\\", "/")
-    stmt = (
-        update(tracking_table)
-            .where(tracking_table.c['Cell ID'] == image.split("_")[0])  # 这里假设表中有一个主键id列
-            .values(v3dpbd_file=dbpbd2)
-    )
-    session.execute(stmt)
+    # stmt = (
+    #     update(tracking_table)
+    #         .where(tracking_table.c['Cell ID'] == image[:5])  # 这里假设表中有一个主键id列
+    #         .values(v3dpbd_file=dbpbd2)
+    # )
+    # session.execute(stmt)
 
-    session.commit()
-    # 关闭会话
-    session.close()
+    # session.commit()
+    # # 关闭会话
+    # session.close()
+    db.query(models.HumanSingleCellTrackingTable) \
+        .filter(models.HumanSingleCellTrackingTable.cell_id == image[:5]) \
+        .update({models.HumanSingleCellTrackingTable.v3dpbd_file: dbpbd2})
+    # 提交更改到数据库
+    db.commit()
 
     pbdbase = r"/mnt/nfs/hndb/V3DPBD"
     directory3 = os.path.join(pbdbase, result_path).replace("\\", "/")
@@ -910,12 +1120,13 @@ async def upload_file(file: UploadFile = File(...)):
 
 
     # 重命名
-    new_file_name = tmp+"/"+image.split("_")[0]+".v3draw"
+    new_file_name = tmp+"/"+image[:5]+".v3draw"
     print(new_file_name)
     # 重命名文件
     os.rename(neuronImage, new_file_name)
     # return {"filename": file.filename, "message": "文件上传成功"}
 '''**********************************2D图像上传，拼接用，开始******************************************'''
+
 @app.post("/api/2Dupload/")
 async def upload_2Dfiles(folderName: str = Form(...), files: List[UploadFile] = File(...)):
 
@@ -947,23 +1158,6 @@ async def upload_2Dfiles(folderName: str = Form(...), files: List[UploadFile] = 
         saved_files.append(file_location)
 
     return JSONResponse(content={"uploaded_files": saved_files})
-
-# @app.post("/api/2Dupload")
-# async def upload_files(files: List[UploadFile] = File(...)):
-#     UPLOAD_DIR = "C:/Users/86132/Desktop/MIP_down/2d-batch"
-#     # 创建上传目录
-#     os.makedirs(UPLOAD_DIR, exist_ok=True)
-#     saved_files = []
-#     for file in files:  # 当 file_location 路径不存在时：
-#                         # 代码会创建一个新的文件，文件路径为 file_location，并将上传的文件内容写入其中。
-#                         # 当 file_location 路径存在时：
-#                         # 代码将覆盖已存在的文件，新的文件内容将替换原有文件的内容。这意味着之前的内容会丢失。
-#         file_location = os.path.join(UPLOAD_DIR, os.path.basename(file.filename)).replace("\\",'/')
-#         with open(file_location, "wb") as f:
-#             f.write(await file.read())
-#         saved_files.append(file_location)
-#
-#     return JSONResponse(content={"uploaded_files": saved_files})
 '''**********************************2D图像上传，拼接用，结束******************************************'''
 
 
@@ -1014,8 +1208,16 @@ def protected(Authorize: AuthJWT = Depends()):
 # 下载V3DPBD
 @app.get("/api/download")
 def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
+
+        # 提取文件名和路径
+    if len(file_path)==5:
+        PBDuploadbase=r"/mnt/nfs/hndb/V3DPBD"
+        pbdpath=foundPBD.found_pbd_file(PBDuploadbase,file_path) # 新的相对路径
+        file_path = '/mnt/nfs/hndb/' + pbdpath
+    else:
+        file_path = '/mnt/nfs/hndb/' + file_path
+    
     # 提取文件名和路径
-    file_path = '/mnt/nfs/hndb/' + file_path
     file_name = os.path.basename(file_path)
     directory = os.path.dirname(file_path)
     print(f"Request to download file: {file_path} with cell_id: {cell_id} \nfile_name: {file_name} \ndirectory: {directory} \n")
@@ -1284,8 +1486,8 @@ def get_production_trend(start_date: str = None, end_date: str = None, db: Sessi
             start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
             end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
             query = query.filter(
-                models.HumanSingleCellTrackingTable.perfusion_date >= start_date_obj,
-                models.HumanSingleCellTrackingTable.perfusion_date <= end_date_obj
+                models.HumanSingleCellTrackingTable.shooting_date >= start_date_obj,
+                models.HumanSingleCellTrackingTable.shooting_date <= end_date_obj
             )
 
         result = query.all()
@@ -1293,7 +1495,7 @@ def get_production_trend(start_date: str = None, end_date: str = None, db: Sessi
         daily_counts = {}
         total_counts = {}
         for record in result:
-            date_str = record.perfusion_date
+            date_str = record.shooting_date
             date = datetime.strptime(date_str, '%Y-%m-%d').strftime('%Y-%m-%d')
             if date in daily_counts:
                 daily_counts[date] += 1
@@ -1309,8 +1511,8 @@ def get_production_trend(start_date: str = None, end_date: str = None, db: Sessi
         daily_values = [daily_counts[date] for date in dates]
         total_values = [sum(daily_values[:i+1]) for i in range(len(daily_values))]
 
-        min_date_str = db.query(func.min(models.HumanSingleCellTrackingTable.perfusion_date)).scalar()
-        max_date_str = db.query(func.max(models.HumanSingleCellTrackingTable.perfusion_date)).scalar()
+        min_date_str = db.query(func.min(models.HumanSingleCellTrackingTable.shooting_date)).scalar()
+        max_date_str = db.query(func.max(models.HumanSingleCellTrackingTable.shooting_date)).scalar()
 
         min_date = datetime.strptime(min_date_str, '%Y-%m-%d') if min_date_str else None
         max_date = datetime.strptime(max_date_str, '%Y-%m-%d') if max_date_str else None
@@ -1449,10 +1651,6 @@ def get_sample_source_distribution(db: Session = Depends(get_db)):
         "source_brain_region_distribution": source_brain_region_distribution  # Brain region distribution per source
     }
 
-# @app.get("/api/cell-source-distribution")
-# def get_cell__source_distribution(db: Session = Depends(get_db)):
-
-
 @app.post("/api/savereport/")
 def save_report(report: schemas.Report, db: Session = Depends(get_db)):
     db_report = DailyReport(report_date=report.report_date, content=report.content)
@@ -1463,18 +1661,44 @@ def save_report(report: schemas.Report, db: Session = Depends(get_db)):
 
 @app.get("/api/latestreport/")
 def get_latest_report(db: Session = Depends(get_db)):
-    latest_report = db.query(DailyReport).order_by(desc(DailyReport.report_date)).first()
+    latest_report = db.query(DailyReport).order_by(desc(DailyReport.created_at)).first()
     if not latest_report:
         raise HTTPException(status_code=404, detail="No report found")
     return {
         "report_date": latest_report.report_date,
         "content": latest_report.content
     }
-
+@app.get("/api/get-samplePID")
+def get_PIDoptions(db: Session = Depends(get_db)):
+    sample_id_options = db.query(models.Sample_Information.patient_number).distinct().order_by(
+        asc(models.Sample_Information.patient_number)).all()
+    return {
+        "pid_options": [{"value": option[0], "label": option[0]} for option in sample_id_options]
+    }
+    
 @app.get("/api/sample_information/", response_model=dict)
-def read_sample_information(skip: int = 0, limit: int = 20, db: Session = Depends(get_db)):
-    data = db.query(models.Sample_Information).offset(skip).limit(limit).all()
-    total = db.query(models.Sample_Information).count()
+def read_sample_information(skip: int = 0, limit: int = 20, sample_hospital: str = None, PID: str = None,db: Session = Depends(get_db)):
+    print('Sample hospital:', sample_hospital)
+    print('PID:', PID)  # 打印PID以调试
+
+    # 初始化查询
+    query = db.query(models.Sample_Information)
+
+    # 根据 sample_hospital 过滤
+    if sample_hospital and sample_hospital != 'none':
+        query = query.filter(models.Sample_Information.sample_id.like(f"{sample_hospital}-%"))
+
+    # 根据 PID 过滤
+    if PID and PID != 'none':
+        query = query.filter(models.Sample_Information.patient_number == PID)
+        
+    # 排序
+    query = query.order_by(cast(models.Sample_Information.total_id, Integer))  
+    
+    # 应用分页
+    total = query.count()
+    data = query.offset(skip).limit(limit).all()
+
     return {
         "data": [schemas.SampleInfo.from_orm(item) for item in data],
         "total": total
@@ -1512,6 +1736,9 @@ def create_sample(sample: schemas.SampleInfoCreate, Authorize: AuthJWT = Depends
             raise HTTPException(status_code=400, detail="Total ID cannot be null")
 
         db_sample = models.Sample_Information(**sample.dict())
+        db_sample.sample_snapshot=""
+        db_sample.sample_image=""
+        db_sample.sample_annotation=""
         db.add(db_sample)
         db.commit()
         db.refresh(db_sample)
@@ -1581,14 +1808,13 @@ def delete_sample_information(idx: int, Authorize: AuthJWT = Depends(), db: Sess
         logging.error(f"Error deleting sample information: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-# 文件上传路径
+# 记录本照片上传路径
 UPLOAD_DIR = "/mnt/nfs/hndb/Record_Book_Pics"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
 # 静态文件路径
 app.mount("/Record_Book_Pics", StaticFiles(directory=UPLOAD_DIR), name="Record_Book_Pics")
-
 
 @app.post("/api/upload_pics")
 async def upload_image(file: UploadFile = File(...)):
@@ -1620,14 +1846,1070 @@ async def get_record_book_pics():
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch record book pics")
 
-#@app.get("/api/record_book_pics")
-#async def get_record_book_pics():
-# try:
-#     pics = [f for f in os.listdir(UPLOAD_DIR) if f.endswith(('.jpg', '.jpeg', '.png'))]
-#      return JSONResponse(content={"pics": pics})
-#   except Exception as e:
-#        raise HTTPException(status_code=500, detail="Failed to fetch record book pics")
+# 灌注文件上传路径
+# ORIGINAL_UPLOAD_DIR = "Injection_Files/Original"
+# TEMP_DIR = "Injection_Files/temp"
+# DB_UPLOAD_DIR = "Injection_Files/DB_Uploads"  # 设置CSV文件上传的目录
+
+ORIGINAL_UPLOAD_DIR = "/mnt/nfs/hndb/Injection_Files/Original"
+TEMP_DIR = "/mnt/nfs/hndb/Injection_Files/temp"
+DB_UPLOAD_DIR = "/mnt/nfs/hndb/Injection_Files/DB_Uploads"  # 设置CSV文件上传的目录
+
+# 存储多个文件到子文件夹
+@app.post("/api/upload_files")
+async def upload_files(subfolder_name: str = Form(...), files: List[UploadFile] = File(...)):
+    # 创建子文件夹
+    subfolder_path = os.path.join(ORIGINAL_UPLOAD_DIR, subfolder_name)
+    if not os.path.exists(subfolder_path):
+        os.makedirs(subfolder_path)
+
+    # 处理并保存上传的文件
+    for file in files:
+        # 获取文件扩展名
+        file_extension = os.path.splitext(file.filename)[1].lower()
+        # 如果是 .csv 文件，重命名为子文件夹名称
+        if file_extension == '.csv':
+            file_path = os.path.join(subfolder_path, f"{subfolder_name}.csv")
+        else:
+            file_path = os.path.join(subfolder_path, file.filename)
+        
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
+
+    return {"message": "Files stored successfully"}
+
+# 检查文件是否存在
+@app.get("/api/check_csv_exists")
+async def check_csv_exists(filename: str):
+    file_path = os.path.join(DB_UPLOAD_DIR, filename)
+    if os.path.exists(file_path):
+        return {"exists": True}
+    return {"exists": False}
+
+REQUIRED_COLUMNS = [
+    "Id", "sample_preparation_date", "sample_preparation_time", "sample_preparation_staff", "slice_thickness",
+    "fresh_perfusion", "Status", "dye_name", "dye_concentration(%)", "immunohistochemistry",
+    "primaryAntibody_concentration", "secondAntibody_band", "DAPI_concentration", "perfusion_date",
+    "perfusion_time", "AddingTime", "Depth", "current_intensity", "perfusion_time_on", "perfusion_time_off",
+    "experiment_temperature", "experiment_humidity", "perfusion_user", "X", "Y", "Z", "AddingX", "AddingY", "AddingZ"
+]
+
+# def convert_to_iso_format(date_str):
+#     """Attempt to convert various date formats to YYYY-MM-DD."""
+#     formats = ["%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y"]
+#     for fmt in formats:
+#         try:
+#             return datetime.strptime(date_str, fmt).strftime("%Y-%m-%d")
+#         except ValueError:
+#             continue
+#     # If no format matched, raise an error
+#     raise ValueError("Unable to convert date format")
+
+@app.post("/api/upload_csv_to_db")
+async def upload_csv_to_db(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    # 确保目录存在
+    os.makedirs(DB_UPLOAD_DIR, exist_ok=True)
+
+    # 准备保存文件的路径
+    file_path = os.path.join(DB_UPLOAD_DIR, file.filename)
+    
+    # 将文件内容保存到内存中，以便后续操作
+    file_content = file.file.read()
+
+    # 解析文件名
+    file_name_without_ext = file.filename.rsplit('.', 1)[0]
+    pattern = re.match(r"^(P\d{5})-(T\d{3})-(R\d{3})-(S\d{3})(?:-(B\d))?$", file_name_without_ext)
+    if not pattern:
+        raise HTTPException(status_code=400, detail="Invalid file name format. Please check the format and try again.")
+
+    # 提取 P, T, R, S, (B) 部分
+    p_part, t_part, r_part, s_part, b_part = pattern.groups()
+    prefix = f"{p_part}_{t_part}_{r_part}_{s_part}"
+    if b_part:
+        prefix += f"_{b_part}"
+    prefix_pattern = re.compile(rf"^{re.escape(prefix)}_C\d+$")
+
+    try:
+        # 读取 CSV 文件内容并将其转换为 DataFrame
+        df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding='utf-8')
+
+        # 检查 CSV 文件中是否有 ID 列
+        if 'Id' not in df.columns:
+            raise HTTPException(status_code=400, detail="CSV file must contain an ID column.")
+
+        # 检查 ID 列中的所有值是否符合文件名中的格式 
+        if not df['Id'].apply(lambda x: bool(prefix_pattern.match(str(x)))).all():
+            raise HTTPException(status_code=400, detail="File name does not match its ID column.")
+
+        # 新增检查 2：C 编号是否有重复
+        c_numbers = df['Id'].apply(lambda x: re.search(r"C\d{5}$", str(x)).group())
+        if c_numbers.duplicated().any():
+            raise HTTPException(status_code=400, detail="Duplicate C numbers found in ID column. Please check and re-upload.")
+
+        # 检查所有必需列是否存在
+        missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing_columns)}")
+
+        # 检查必需列的空值（perfusion_time 和 AddingTime 除外）
+        empty_columns = [col for col in REQUIRED_COLUMNS if col not in ["perfusion_time", "AddingTime"] and df[col].isnull().any()]
+        if empty_columns:
+            raise HTTPException(status_code=400, detail=f"Columns with missing values: {', '.join(empty_columns)}")
+
+        # 从文件名中提取数值
+        p_number = int(p_part[1:])  # 取出 P 部分的数值
+        t_number = int(t_part[1:])  # 取出 T 部分的数值
+
+        # 查询数据库，验证 P 和 T 编号是否存在，只比较数值部分
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,  # 去掉 "P" 并只比较数值
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number  # 去掉 "T" 并只比较数值
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(status_code=400, detail="No matching sample found.")
+
+        # # 新增：检查 dye_name 列是否包含 '-1'
+        # if df['dye_name'].astype(str).str.strip().eq('-1').any():
+        #     raise HTTPException(status_code=400, detail="Abnormal value in dye_name column.")
+
+        # 新增：检查 dye_name 列是否包含数值或数值型字符串
+        def is_numeric(value):
+            try:
+                # 尝试将值转换为浮点数
+                float(str(value).strip())
+                return True
+            except ValueError:
+                return False
+
+        if df['dye_name'].apply(is_numeric).any():
+            raise HTTPException(status_code=400, detail="Abnormal value in dye_name column.")
+
+        # Check concentration columns for integer-only values
+        concentration_columns = ['primaryAntibody_concentration', 'DAPI_concentration']
+        for col in concentration_columns:
+            if not df[col].apply(lambda x: isinstance(x, int) or str(x).isdigit() or str(x) == '-').all():
+                raise HTTPException(status_code=400, detail="Concentration contents error.")
+        
+        # 将日期列转换为 datetime 对象
+        date_columns = ['sample_preparation_date', 'perfusion_date']
+        for date_col in date_columns:
+            try:
+                df[date_col] = pd.to_datetime(df[date_col], errors='raise', infer_datetime_format=True)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Unable to convert date format in column {date_col}: {str(e)}")
+
+        ## 添加 ihc_category 列并根据 dye_name 列设置值
+        # if 'ihc_category' not in df.columns:
+        #     df['ihc_category'] = df['dye_name'].apply(lambda x: 'Lucifer Yellow' if x == 'Lucifer Yellow' else '-')
+        # else:
+        #     df.loc[df['dye_name'] == 'Lucifer Yellow', 'ihc_category'] = 'Lucifer Yellow'
+        #     df.loc[df['dye_name'] != 'Lucifer Yellow', 'ihc_category'] = '-'
+
+        # 修改：处理 ihc_category 列
+        cutoff_date = pd.to_datetime('2024-10-29')
+        def process_ihc_category(row):
+            if row['perfusion_date'] <= cutoff_date:
+                # 现有逻辑
+                if row['dye_name'] == 'Lucifer Yellow':
+                    return 'Lucifer Yellow'
+                else:
+                    return '-'
+            else:
+                # 保留原始值，不进行处理
+                return row['ihc_category']
+        df['ihc_category'] = df.apply(process_ihc_category, axis=1)
+
+        df['sample_preparation_date'] = df['sample_preparation_date'].dt.strftime('%Y-%m-%d')
+        df['perfusion_date'] = df['perfusion_date'].dt.strftime('%Y-%m-%d')
+
+        # 添加一个新列 file_name 并将所有行的值设置为当前文件名
+        df['file_name'] = file.filename
+        
+        df = df.replace({np.nan: '--'})
+
+        # 尝试将 DataFrame 插入数据库
+        table = Table('injection_table_20241028', MetaData(), autoload_with=db.bind)
+        try:
+            for _, row in df.iterrows():
+                # print(row)
+                stmt = insert(table).values(row.to_dict())
+                db.execute(stmt)
+            
+            db.commit()
+
+        except SQLAlchemyError as db_error:
+            print(f"Database insertion failed: {db_error}")
+            raise HTTPException(status_code=400, detail=f"Database insertion failed: {str(db_error)}")
+
+        # try:
+        #     df.to_sql('injection_table_20241010', con=db.bind, if_exists='append', index=False)
+
+        # except Exception as db_error:
+        #     raise HTTPException(status_code=400, detail=f"Database insertion failed: {str(db_error)}")
+        
+        # 如果数据库插入成功，保存文件到服务器
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
+    
+    return {"message": "CSV uploaded and stored in the database successfully"}
+
+# 列出子文件夹(未检查的文件夹列表）
+@app.get("/api/folders")
+async def list_folders():
+    # 获取 ORIGINAL_UPLOAD_DIR 中的所有子文件夹
+    folders = [f for f in os.listdir(ORIGINAL_UPLOAD_DIR) if os.path.isdir(os.path.join(ORIGINAL_UPLOAD_DIR, f))]
+
+    # 过滤出 DB_UPLOAD_DIR 中没有对应 CSV 文件的子文件夹
+    filtered_folders = []
+    for folder in folders:
+        # 构建对应的 CSV 文件名
+        csv_file_name = f"{folder}.csv"
+        csv_file_path = os.path.join(DB_UPLOAD_DIR, csv_file_name)
+
+        # 检查 CSV 文件是否存在
+        if not os.path.exists(csv_file_path):
+            filtered_folders.append(folder)
+
+    return {"folders": filtered_folders}
+
+# 下载子文件夹
+@app.get("/api/download_folder")
+async def download_folder(folder: str):
+    folder_path = os.path.join(ORIGINAL_UPLOAD_DIR, folder)
+    if not os.path.exists(folder_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
+    
+    # 确保临时目录存在
+    os.makedirs(TEMP_DIR, exist_ok=True)
+
+    # 在临时目录中创建 zip 文件
+    zip_file_path = os.path.join(TEMP_DIR, f"{folder}.zip")
+    shutil.make_archive(os.path.join(TEMP_DIR, folder), 'zip', folder_path)
+    
+    return FileResponse(zip_file_path, media_type='application/zip', filename=f"{folder}.zip")
+
+# 定义文件保存路径
+# IMAGING_METADATA_DIR = "Imaging_Files/Metadata"
+# MARKER_FILES_DIR = "Imaging_Files/Markers"
+# ANNOTATION_FILES_DIR = "Imaging_Files/Annotations"
+IMAGING_METADATA_DIR = "/mnt/nfs/hndb/Imaging_Files/Metadata"
+MARKER_FILES_DIR = "/mnt/nfs/hndb/Imaging_Files/Markers"
+ANNOTATION_FILES_DIR = "/mnt/nfs/hndb/Imaging_Files/Annotations"
+
+# 确保目录存在
+os.makedirs(IMAGING_METADATA_DIR, exist_ok=True)
+os.makedirs(MARKER_FILES_DIR, exist_ok=True)
+os.makedirs(ANNOTATION_FILES_DIR, exist_ok=True)
+
+# Helper functions to check if a string is an integer or float
+def is_float(s):
+    pattern = r'^[-+]?[0-9]*\.[0-9]+$'
+    return bool(re.match(pattern, s))
+
+def is_integer(s):
+    return s.isdigit()
+
+# Function to read marker file lines into a DataFrame
+def read_marker_lines(lines):
+    result_dict = {}
+    headers = []
+    row_count = 0
+    for line in lines:
+        # 跳过空白行
+        if not line.strip():
+            continue
+        if line.startswith('##'):
+            if not result_dict:
+                headers = [header.strip() for header in line[2:].strip().split(',')]
+                row_count = len(headers)
+                for header in headers:
+                    result_dict[header] = []
+            else:
+                raise Exception('Duplicated headers in marker file!')
+        else:
+            if result_dict:
+                cells = [cell.strip() for cell in line.strip().split(',')]
+                if len(cells) != row_count:
+                    raise Exception('Missing columns of data!')
+                for i in range(row_count):
+                    header = headers[i]
+                    cell = cells[i]
+                    if is_integer(cell):
+                        cell = int(cell)
+                    elif is_float(cell):
+                        cell = float(cell)
+                    result_dict[header].append(cell)
+            else:
+                raise Exception('Missing headers before data!')
+    result = pd.DataFrame(result_dict)
+    return result
+
+# Updated upload_imaging_info API
+@app.post("/api/upload_imaging_info")
+async def upload_imaging_info(
+    metadata_files: List[UploadFile] = File([]),
+    marker_files: List[UploadFile] = File([]),
+    annotation_files: List[UploadFile] = File([]),
+    db: Session = Depends(get_db)  # 注入数据库会话
+):
+    uploaded_files = []
+
+    # Function to validate sample numbers against the database
+    def validate_sample_number(file_name: str):
+        # 提取文件名中的 P 和 T 编号
+        file_pattern = r"^P(\d{5})-T(\d{3})-R\d{3}-S\d{3}(-B\d)?(-\d+)?"
+        match = re.match(file_pattern, file_name)
+        if not match:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid filename format for sample number check: {file_name}"
+            )
+        p_number, t_number = int(match.group(1)), int(match.group(2))
+
+        # 查询数据库，验证 P 和 T 编号是否存在
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"No matching sample found for P{p_number} and T{t_number}. Please check the file: {file_name}"
+            )
+
+    # Process metadata files
+    for file in metadata_files:
+        try:
+            # Validate filename format
+            if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?-[A-Z]{2,3}\.(xlsx|xml)$", file.filename):
+                raise HTTPException(status_code=400, detail="Invalid filename format for metadata file. Expected format: P00001-T001-R001-S001(-B1)(-1)-NAME.xlsx or .xml")
+            
+            # Validate sample number in the file name
+            validate_sample_number(file.filename)
+
+            # Check if file already exists
+            file_path = os.path.join(IMAGING_METADATA_DIR, file.filename)
+            if os.path.exists(file_path):
+                raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+    
+            # Save file
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            uploaded_files.append(file.filename)
+        except HTTPException as e:
+            # Raise exception with uploaded_files
+            raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+    # Process marker files
+    for file in marker_files:
+        try:
+            # Validate filename and extract P, T, R, S, B
+            file_pattern = r"^(P\d{5})-(T\d{3})-(R\d{3})-(S\d{3})(-B\d)?(-\d+)?\.marker$"
+            match = re.match(file_pattern, file.filename)
+            if not match:
+                raise HTTPException(status_code=400, detail="Invalid filename format for marker file. Expected format: P00001-T001-R001-S001(-B1)(-1).marker")
+            file_parts = match.groups()
+            file_P = file_parts[0]
+            file_T = file_parts[1]
+            file_R = file_parts[2]
+            file_S = file_parts[3]
+            file_B = file_parts[4] if file_parts[4] else ''
+            file_number = file_B.lstrip('-B') if file_B else ''
+
+            # Validate sample number in the file name
+            validate_sample_number(file.filename)
+
+            # Read marker file content
+            file.file.seek(0)
+            lines = [line.decode('utf-8').strip() for line in file.file.readlines()]
+            
+            try:
+                marker_df = read_marker_lines(lines)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Error reading marker file '{file.filename}': {str(e)}")
+    
+            # Check required columns
+            required_columns = {'name', 'x', 'y', 'z'}
+            if not required_columns.issubset(marker_df.columns):
+                raise HTTPException(status_code=400, detail=f"Marker file '{file.filename}' is missing required columns: {required_columns}")
+    
+            # Validate 'name' column entries
+            for name_entry in marker_df['name']:
+                # Add a type check for name_entry
+                if not isinstance(name_entry, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"'{file.filename}' File name and its 'name' column do not match."
+                    )
+                name_pattern = r"^(P\d{5})_(T\d{3})_(R\d{3})_(S\d{3})(_B\d)?_C\d+"
+                name_match = re.match(name_pattern, name_entry)
+                if not name_match:
+                    raise HTTPException(status_code=400, detail=f"Invalid 'name' entry in marker file '{file.filename}': {name_entry}")
+                name_parts = name_match.groups()
+                name_P = name_parts[0]
+                name_T = name_parts[1]
+                name_R = name_parts[2]
+                name_S = name_parts[3]
+                name_B = name_parts[4] if name_parts[4] else ''
+                name_number = name_B.lstrip('_B') if name_B else ''
+    
+                # Compare file_P with name_P, etc.
+                if (file_P != name_P or file_T != name_T or file_R != name_R or file_S != name_S or file_number != name_number):
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"'{file.filename}' File name and its 'name' column do not match. Please check."
+                    )
+
+            # Step 1: Check for duplicate 'C' identifiers
+            if marker_df['name'].duplicated().any():
+                duplicate_names = marker_df[marker_df['name'].duplicated()]['name'].unique()
+                raise HTTPException(
+                    status_code = 400,
+                    # detail=f"Duplicate 'C' identifiers found in marker file '{file.filename}': {', '.join(duplicate_names)}"
+                    detail = "Duplicate C numbers found in 'name' column. Please check."
+                )
+
+            # Step 2: Validate 'name' column format
+            invalid_names = marker_df[~marker_df['name'].str.match(r'^C\d{5}$', na=False)]
+            if not invalid_names.empty:
+                raise HTTPException(
+                    status_code=400,
+                    # detail=f"Invalid 'name' entries in marker file '{file.filename}': {', '.join(invalid_names['name'].unique())}"
+                    detail="Invalid C number in the 'name' column. Please check."
+                )
+
+            # Check if file already exists
+            file_path = os.path.join(MARKER_FILES_DIR, file.filename)
+            if os.path.exists(file_path):
+                raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+    
+            # Save file
+            file.file.seek(0)
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            uploaded_files.append(file.filename)
+        except HTTPException as e:
+            # Raise exception with uploaded_files
+            raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+    # Process annotation files
+    for file in annotation_files:
+        try:
+            # Validate filename format
+            if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?\.apo$", file.filename):
+                raise HTTPException(status_code=400, detail="Invalid filename format for annotation file. Expected format: P00001-T001-R001-S001(-B1)(-1).apo")
+            
+            # Validate sample number in the file name
+            validate_sample_number(file.filename)
+
+            # Check if file already exists
+            file_path = os.path.join(ANNOTATION_FILES_DIR, file.filename)
+            if os.path.exists(file_path):
+                raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+
+            # Save file
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+            uploaded_files.append(file.filename)
+        except HTTPException as e:
+            raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+    return JSONResponse(content={"message": "Files uploaded successfully", "uploaded_files": uploaded_files})
+
+
+
+### LLMs 部分
+
+# 配置 Redis
+redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
+REDIS_EXPIRATION_TIME = 1800  # 上下文过期时间，单位：秒（30分钟）
+
+class Question(BaseModel):
+    session_id: str
+    question: str
+
+@app.post("/api/agent")
+async def agent_endpoint(question: Question):
+    try:
+        # 验证数据是否有效
+        if not question.session_id or not question.question:
+            raise HTTPException(status_code=422, detail="Missing session_id or question")
+
+        # 调用多轮对话处理函数
+        answer = await process_user_question(question.session_id, question.question)
+        return {"answer": answer}
+    except Exception as e:
+        # 捕获所有异常并记录日志
+        print(f"Error processing question: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+async def process_user_question(session_id: str, question: str) -> str:
+    """
+    Processes the user's question, supports multi-turn conversations.
+
+    :param session_id: Unique identifier for the session, used for context storage
+    :param question: User's question
+    :return: Assistant's answer
+    """
+    # Retrieve context from Redis
+    context = get_context_from_redis(session_id)
+
+    # Append user's question to context
+    context.append({"role": "user", "content": question})
+
+    # Determine question category
+    category = await determine_question_category(question)
+    print(f"Category: {category}")
+
+    # Map category to handler functions
+    category_handlers = {
+        1: handle_database_status,
+        2: handle_data_production,
+        3: handle_simple_field_query,
+        4: handle_detailed_field_report,
+        5: handle_professional_question,
+    }
+
+    handler = category_handlers.get(category, handle_professional_question)
+    answer = await handler(question, context)
+
+    # Append assistant's answer to context
+    context.append({"role": "assistant", "content": answer})
+    save_context_to_redis(session_id, context)
+    
+    return answer
+
+def get_context_from_redis(session_id: str) -> list:
+    """
+    从 Redis 中获取上下文。
+    
+    :param session_id: 会话 ID
+    :return: 上下文列表
+    """
+    context = redis_client.get(session_id)
+    if context:
+        return json.loads(context)
+    # 如果上下文不存在，初始化默认值
+    return [{"role": "system", "content": "You are a helpful assistant specialized in neuroscience databases."}]
+
+def save_context_to_redis(session_id: str, context: list):
+    """
+    将上下文保存到 Redis, 并设置过期时间。
+    
+    :param session_id: 会话 ID
+    :param context: 上下文列表
+    """
+    redis_client.set(session_id, json.dumps(context), ex=REDIS_EXPIRATION_TIME)
+
+# def determine_question_category(question: str) -> int:
+#     """
+#     Determines the category of the question based on predefined keywords.
+#     Categories:
+#     1 - Database status
+#     2 - Data production situation
+#     3 - Simple field queries
+#     4 - Detailed field reports
+#     5 - Professional questions
+#     """
+#     normalized_question = question.lower()
+
+#     category_keywords = {
+#         1: ["data status", "database status", "database summary", "data overview", "database info", "database information", "overview of the database"],
+#         2: ["data production", "daily production", "production report"],
+#         3: ["number of", "count of", "how many", "quantity of", "total number"],
+#         4: ["distribution", "overall situation", "list all", "summary of", "detailed report"],
+#     }
+
+#     for category, keywords in category_keywords.items():
+#         if any(keyword in normalized_question for keyword in keywords):
+#             return category
+#     # Default to category 5 if no keywords match
+#     return 5
+
+async def determine_question_category(question: str) -> int:
+    """
+    Determines the category of the question using an LLM.
+    Categories:
+    1 - Database status
+    2 - Data production situation
+    3 - Simple field queries
+    4 - Detailed field reports
+    5 - Professional questions
+    """
+    # Build a prompt for the LLM
+    prompt = (
+        "Please classify the following question into one of the following categories by providing the category number only:\n\n"
+        "Categories:\n"
+        "1 - Database status queries (e.g., 'What is the current status of the database?')\n"
+        "2 - Data production situation (e.g., 'What data was produced today?')\n"
+        "3 - Simple field queries requiring a numerical answer (e.g., 'How many cells are in region 'MFG'?')\n"
+        "4 - Detailed field reports requiring a summary or distribution (e.g., 'Provide a report on the age distribution of samples.')\n"
+        "5 - Professional or general questions (e.g., 'Explain the role of neurons in the brain.')\n\n"
+        f"Question: \"{question}\"\n\n"
+        "Provide only the category number (1-5)."
+    )
+    
+    # Call the LLM with the prompt
+    response = await call_large_language_model(prompt)
+
+    # print(response)
+    
+    # Extract the category number from the response
+    try:
+        category = int(response.strip())
+        if category in [1, 2, 3, 4, 5]:
+            return category
+        else:
+            # If the response is not a valid category number, default to category 5
+            return 5
+    except ValueError:
+        # If the response cannot be converted to an integer, default to category 5
+        return 5
+
+async def handle_database_status(question: str, context: list) -> str:
+    data_status = await get_data_status()
+    return format_data_status(data_status)
+
+async def handle_data_production(question: str, context: list) -> str:
+    date = extract_date_from_question(question)
+    if not date:
+        return "Please provide a specific date for the production report."
+    perfusion_count = await get_perfusion_count_by_date(date)
+    imaging_count = await get_imaging_count_by_date(date)
+    return (f"On {date.strftime('%Y-%m-%d')}, there were {perfusion_count} perfusion records "
+            f"and {imaging_count} imaging records.")
+
+async def handle_simple_field_query(question: str, context: list) -> str:
+    field, value = extract_field_and_value(question)
+    if not field or not value:
+        return "Could not understand the field or value in your question. Please specify clearly."
+    count = await get_count_by_field_value(field, value)
+    return f"The number of records where '{field}' is '{value}' is {count}."
+
+async def handle_detailed_field_report(question: str, context: list) -> str:
+    field = extract_field(question)
+    if not field:
+        return "Could not understand the field you are interested in. Please specify clearly."
+    data_list = await get_field_data(field)
+    report = await generate_field_report(data_list, field)
+    return report
+
+async def handle_professional_question(question: str, context: list) -> str:
+    return await call_large_language_model_with_context(question, context)
+
+def extract_date_from_question(question: str):
+    cal = parsedatetime.Calendar()
+    time_struct, parse_status = cal.parse(question)
+    if parse_status == 1:
+        return datetime(*time_struct[:6]).date()
+    return None
+
+nlp = spacy.load('en_core_web_sm')
+
+def extract_field_and_value(question: str):
+    doc = nlp(question.lower())
+    field_synonyms = {
+        "age": ["age", "ages", "old"],
+        "gender": ["gender", "sex"],
+        "brain region": ["brain region", "region", "brain area", "area"],
+        "sample source": ["sample source", "source", "origin"],
+    }
+    field = None
+    value = None
+    for token in doc:
+        for key, synonyms in field_synonyms.items():
+            if token.text in synonyms:
+                field = key
+                break
+        if field:
+            break
+    if not field:
+        return None, None
+    # 寻找值，假设在字段后面
+    token_index = token.i
+    for token in doc[token_index+1:]:
+        if token.pos_ in ["NOUN", "PROPN", "NUM", "ADJ"]:
+            value = token.text
+            break
+    return field, value
+
+def extract_field(question: str):
+    doc = nlp(question.lower())
+    field_synonyms = {
+        "age": ["age", "ages", "age distribution"],
+        "gender": ["gender", "sex", "genders"],
+        "brain region": ["brain region", "region", "regions", "brain area", "areas"],
+        "sample source": ["sample source", "source", "sources", "origin", "origins"],
+    }
+    field = None
+    for token in doc:
+        for key, synonyms in field_synonyms.items():
+            if token.text in synonyms:
+                field = key
+                break
+        if field:
+            break
+    return field
+
+async def get_data_status():
+    db = SessionLocal()
+    try:
+        total_samples = crud.get_total_samples(db)
+        valid_samples = crud.get_valid_samples(db)
+        total_cells = crud.get_total_count(db)
+        total_regions = crud.get_total_regions(db)
+        data_status = {
+            "total_samples": total_samples,
+            "valid_samples": valid_samples,
+            "cells": total_cells,
+            "regions": total_regions
+        }
+    finally:
+        db.close()
+    return data_status
+
+def format_data_status(data_status: dict) -> str:
+    return (
+        f"The database contains {data_status['total_samples']} samples, "
+        f"{data_status['valid_samples']} valid samples, "
+        f"{data_status['cells']} cells, "
+        f"spanning {data_status['regions']} brain regions."
+    )
+
+async def get_perfusion_count_by_date(date: datetime.date) -> int:
+    db = SessionLocal()
+    try:
+        count = db.query(models.Injection_Table).filter(
+            func.date(models.Injection_Table.perfusion_date) == date
+        ).count()
+        return count
+    except Exception as e:
+        print(f"Error querying perfusion data: {e}")
+        return 0
+    finally:
+        db.close()
+
+async def get_imaging_count_by_date(date: datetime.date) -> int:
+    db = SessionLocal()
+    try:
+        count = db.query(models.Imaging_Information).filter(
+            func.date(models.Imaging_Information.shooting_date) == date
+        ).count()
+        return count
+    except Exception as e:
+        print(f"Error querying imaging data: {e}")
+        return 0
+    finally:
+        db.close()
+
+async def get_count_by_field_value(field: str, value: str) -> int:
+    db = SessionLocal()
+    try:
+        model_field = get_model_field(field)
+        if not model_field:
+            return 0
+        count = db.query(model_field).filter(model_field == value).count()
+        return count
+    except Exception as e:
+        print(f"Error querying data: {e}")
+        return 0
+    finally:
+        db.close()
+
+def get_model_field(field_name: str):
+    """
+    Maps field names to model fields.
+    """
+    field_mapping = {
+        "age": models.Sample_Information.patient_age,
+        "gender": models.Sample_Information.gender,
+        "brain region": models.HumanSingleCellTrackingTable.brain_region,
+        "sample source": models.Sample_Information.sample_id,
+        "dye": models.HumanSingleCellTrackingTable.dye_name,
+        "immunohistochemistry": models.HumanSingleCellTrackingTable.immunohistochemistry,
+    }
+    return field_mapping.get(field_name.lower())
+
+async def get_field_data(field: str):
+    db = SessionLocal()
+    try:
+        model_field = get_model_field(field)
+        if not model_field:
+            return []
+        data = db.query(model_field).all()
+        return [item[0] for item in data]
+    except Exception as e:
+        print(f"Error querying data: {e}")
+        return []
+    finally:
+        db.close()
+
+# def generate_field_report(data_list: list, field: str) -> str:
+#     data_counts = Counter(data_list)
+#     data_summary = "\n".join([f"{item}: {count}" for item, count in data_counts.items()])
+#     return f"Here is the distribution of {field}:\n{data_summary}"
+
+async def generate_field_report(data_list: list, field: str) -> str:
+    """
+    Generates a detailed report for the given field using LLM.
+    """
+    # Prepare data summary
+    data_counts = Counter(data_list)
+    # Convert counts to a string format suitable for LLM input
+    data_summary = "\n".join([f"{item}: {count}" for item, count in data_counts.items()])
+    
+    # Construct a prompt for the LLM
+    # prompt = (
+    #     f"As an expert data analyst, please provide a brief report on the distribution of '{field}' "
+    #     f"in the dataset based on the following information:\n\n"
+    #     f"{data_summary}\n\n"
+    # )
+
+    prompt = (
+        f"Based on the following {field} information, please provide a brief report:\n\n"
+        f"{data_summary}\n\n"
+    )
+
+    # Call the LLM to generate the report
+    report = await call_large_language_model_with_context(prompt, [])
+    return report
+
+async def call_large_language_model(prompt: str) -> str:
+    """
+    Calls the LLM to get a response based on the prompt.
+    """
+    response = await openai.ChatCompletion.acreate(
+        model='gpt-4o', 
+        messages=[
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=5,
+        temperature=0,
+    )
+    return response.choices[0].message.content.strip()
+
+async def call_large_language_model_with_context(prompt: str, context: list) -> str:
+    """
+    Calls the LLM, passing the context for multi-turn conversation.
+
+    :param prompt: The prompt or question to send to the LLM
+    :param context: Conversation context
+    :return: Assistant's response
+    """
+    # Build the messages list for the API call
+    messages = context + [{"role": "user", "content": prompt}]
+    
+    response = openai.ChatCompletion.create(
+        model = "gpt-4o",  # Use an appropriate model name
+        messages = messages,
+        max_tokens = 1024,
+        temperature = 0.7,
+    )
+    return response.choices[0].message.content.strip()
+
+
+
+
+
+
+
+
+
+# def is_database_status_query(question: str) -> bool:
+#     database_status_keywords = [
+#         "data status",
+#         "database status",
+#         "database summary",
+#         "data overview",
+#         "database info",
+#         "database information",
+#         "数据库状态",
+#         "数据库概况",
+#         "数据概览",
+#         "数据库信息",
+#         "数据库摘要",
+#         "数据状态",
+#         "数据摘要",
+#         "数据库目前情况",
+#         "数据库内容",
+#         "数据库统计",
+#     ]
+#     normalized_question = question.lower()
+#     for keyword in database_status_keywords:
+#         if keyword.lower() in normalized_question:
+#             return True
+#     return False
+
+# def is_daily_production_query(question: str) -> bool:
+#     daily_production_keywords = [
+#         "日数据生产情况",
+#         "每日数据生产",
+#         "今天的数据生产",
+#         "某天的数据生产",
+#         "数据生产情况",
+#         "数据生产统计",
+#         "数据生产报告",
+#         "data production",
+#         "daily production",
+#         "production report",
+#     ]
+#     normalized_question = question.lower()
+#     for keyword in daily_production_keywords:
+#         if keyword.lower() in normalized_question:
+#             return True
+#     return False
+
+# def extract_date_from_question(question: str):
+#     cal = parsedatetime.Calendar()
+#     time_struct, parse_status = cal.parse(question)
+#     if parse_status == 1:
+#         # 解析成功，转换为日期对象
+#         return datetime(*time_struct[:6]).date()
+#     else:
+#         return None
+
+# async def generate_daily_production_report(question: str) -> str:
+#     # 从用户的问题中提取日期
+#     date = extract_date_from_question(question)
+#     if not date:
+#         return "Sorry, I couldn't extract a date from your question. Please provide a specific date, e.g., 'November 14, 2024'."
+
+#     # 查询数据库获取数据
+#     perfusion_count = await get_perfusion_count_by_date(date)
+#     imaging_count = await get_imaging_count_by_date(date)
+
+#     # 生成英文报告
+#     report = (
+#         f"On {date.strftime('%Y-%m-%d')}, there were {perfusion_count} perfusion records "
+#         f"and {imaging_count} imaging records."
+#     )
+#     return report
+
+# async def get_perfusion_count_by_date(date: datetime.date) -> int:
+#     db = SessionLocal()
+#     try:
+#         count = db.query(models.Injection_Table).filter(
+#             func.date(models.Injection_Table.perfusion_date) == date
+#         ).count()
+#         return count
+#     except Exception as e:
+#         print(f"Error querying perfusion data: {e}")
+#         return 0
+#     finally:
+#         db.close()
+
+# async def get_imaging_count_by_date(date: datetime.date) -> int:
+#     db = SessionLocal()
+#     try:
+#         count = db.query(models.Imaging_Information).filter(
+#             func.date(models.Imaging_Information.shooting_date) == date
+#         ).count()
+#         return count
+#     except Exception as e:
+#         print(f"Error querying imaging data: {e}")
+#         return 0
+#     finally:
+#         db.close()
+
+# Sample Information Retrieval
+# async def get_sample_info(query_info):
+#     db = SessionLocal()
+#     try:
+#         data_field = query_info["field"]
+#         raw_data = db.query(data_field).all()
+#     except Exception as e:
+#         print(f"Error querying data: {e}")
+#         return []
+#     finally:
+#         db.close()
+
+#     # Extract data if an extract function is provided
+#     if query_info["extract_func"]:
+#         processed_data = [query_info["extract_func"](item[0]) for item in raw_data]
+#     else:
+#         processed_data = [item[0] for item in raw_data]
+
+#     return processed_data
+
+# def extract_sample_source(sample_id: str) -> str:
+#     # Split sample_id by '-' and join the first two parts
+#     return '-'.join(sample_id.split('-')[:2])
+
+# # Report Generation
+# async def generate_sample_info_report(data_list: list, description: str) -> str:
+#     # Prepare a summary or data to send to the LLM
+#     # For example, count occurrences of each sample source
+
+#     data_counts = Counter(data_list)
+#     data_summary = "\n".join([f"{item}: {count}" for item, count in data_counts.items()])
+
+#     # Construct a prompt for the LLM
+#     prompt = (
+#         f"Based on the following {description} information, please provide a brief report:\n\n"
+#         f"{data_summary}\n\n"
+#     )
+
+#     # Call the LLM with the prompt
+#     response = await call_large_language_model_with_context(prompt, [])
+
+#     return response
+
+# # Define a mapping of query keywords to database fields and report generation functions
+# QUERY_MAPPING = {
+#     "sample source": {
+#         "field": models.Sample_Information.sample_id,
+#         "extract_func": extract_sample_source,
+#         "report_func": generate_sample_info_report,
+#         "description": "sample source",
+#     },
+#     "sample age": {
+#         "field": models.Sample_Information.patient_age,
+#         "extract_func": None,
+#         "report_func": generate_sample_info_report,
+#         "description": "sample age",
+#     },
+#     "sample gender": {
+#         "field": models.Sample_Information.gender,
+#         "extract_func": None,
+#         "report_func": generate_sample_info_report,
+#         "description": "sample gender",
+#     },
+#     "brain region": {
+#         "field": models.HumanSingleCellTrackingTable.brain_region,
+#         "extract_func": None,
+#         "report_func": generate_sample_info_report,
+#         "description": "brain region",
+#     },
+#     "dye": {
+#         "field": models.HumanSingleCellTrackingTable.dye_name,
+#         "extract_func": None,
+#         "report_func": generate_sample_info_report,
+#         "description": "dye",
+#     },
+#     "immunohistochemistry": {
+#         "field": models.HumanSingleCellTrackingTable.immunohistochemistry,
+#         "extract_func": None,
+#         "report_func": generate_sample_info_report,
+#         "description": "immunohistochemistry",
+#     },
+# }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

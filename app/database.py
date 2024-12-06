@@ -3,7 +3,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron"
+SQLALCHEMY_DATABASE_URL = 'mysql+pymysql://root:braintell%40seu@localhost/human_neuron'
+# SQLALCHEMY_DATABASE_URL = "mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron"
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

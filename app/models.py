@@ -19,7 +19,7 @@ class UserLog(Base):
     __tablename__ = 'user_logs_20240725'
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey('users.id'))
-    username = Column(String)
+    username = Column("username", String(255))
     action = Column("action", String, index=True)
     timestamp = Column("timestamp", DateTime, default=datetime.utcnow)
     details = Column("details", Text)  # 新增字段记录详细信息
@@ -29,6 +29,7 @@ class UserLog(Base):
 class HumanSingleCellTrackingTable(Base):
     __tablename__ = "human_singlecell_trackingtable_20240712"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    injection_id = Column("Injection ID", String(50))
     cell_id = Column("Cell ID", String(255))
     # tissue_id = Column("Tissue ID", String(255))  # 删除
     # slice_id = Column("Silce ID", String(255))  # 删除
@@ -69,9 +70,13 @@ class HumanSingleCellTrackingTable(Base):
     first_antibody_concentration = Column("一抗浓度", String(255))
     secondary_antibody_band = Column("二抗波段", String(255))
     dapi_concentration = Column("DAPI浓度", String(255))
+    image_device = Column("Image Device", String(50))   ### 新增列
     laser_wavelength = Column("激光波长(nm)", String(255))
     laser_power = Column("激光功率(mW)", String(255))
     laser_power_ratio = Column("激光功率比例(%)", String(255))
+    gain = Column("gain", String(50))   ### 新增列
+    scanner = Column("scanner", String(50))    ### 新增列
+    averaging = Column("averaging", String(50))    ### 新增列
     pmt_voltage = Column("PMT(V)", String(255))
     z_size = Column("Z_size(张)", String(255))
     tiling = Column("平铺(0:否;1:是)", String(255))
@@ -94,9 +99,9 @@ class HumanSingleCellTrackingTable(Base):
     remarks = Column("备注", Text)
     image_file = Column("image_file", Text)
     v3dpbd_file = Column("v3dpbd_file", Text)
-    soma_x = Column("soma_x", String(255))
-    soma_y = Column("soma_y", String(255))
-    soma_z = Column("soma_z", String(255))
+    soma_x = Column("soma_x", String(50))
+    soma_y = Column("soma_y", String(50))
+    soma_z = Column("soma_z", String(50))
     swc_auto14 = Column("swc_auto14", String(255))
 
 
@@ -132,6 +137,10 @@ class Sample_Information(Base):
     treatment_received = Column("接受过何种治疗", Text)
     pathological_diagnosis = Column("病理诊断", String(255))
 
+    sample_snapshot = Column("sample_snapshot", String(255))
+    sample_image = Column("sample_image", String(255))
+    sample_annotation = Column("sample_annotation", String(255))
+
 class DailyReport(Base):
     __tablename__ = 'daily_reports_20240628'
     id = Column(Integer, primary_key=True, index=True)
@@ -139,3 +148,15 @@ class DailyReport(Base):
     content = Column(Text, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.now())
     
+class Injection_Table(Base):
+    __tablename__ = 'injection_table_20241028'
+    idx = Column(Integer, primary_key=True, autoincrement=True)
+
+    perfusion_date = Column("perfusion_date", String(255))
+
+
+class Imaging_Information(Base):
+    __tablename__ = 'imaging_information_20241023'
+    idx = Column(Integer, primary_key=True, autoincrement=True)
+
+    shooting_date = Column("shooting_date", String(255))
