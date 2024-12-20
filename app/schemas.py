@@ -1,7 +1,7 @@
 # 定义了Pydantic模式，用于数据验证和序列化
 
 from pydantic import BaseModel, BaseSettings
-from typing import Optional
+from typing import Optional, List
 from datetime import date, datetime
 
 class UserLog(BaseModel):
@@ -182,3 +182,27 @@ class SampleInfo(SampleInfoBase):
 
     class Config:
         from_attributes = True
+
+
+class ImagingRecordSchema(BaseModel):
+    id: Optional[int]
+    producer: str
+    status: str
+    class Config:
+        orm_mode = True
+
+class SamplePreparationSchema(BaseModel):
+    id: Optional[int]
+    sampleId: str
+    tissueId: str
+    rollId: str
+    sliceId: str
+    blockId: str
+    channels: int
+    needles: int
+    status: str
+    operator: Optional[str] = None
+    imaging_records: Optional[List[ImagingRecordSchema]] = []
+    created_at: Optional[datetime]
+    class Config:
+        orm_mode = True

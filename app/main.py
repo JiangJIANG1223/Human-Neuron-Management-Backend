@@ -17,7 +17,8 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from PIL import Image
 import os
-from app.models import User, DailyReport
+from app.models import User, DailyReport,SamplePreparation, ImagingRecord
+from .schemas import SamplePreparationSchema, ImagingRecordSchema
 from fastapi_jwt_auth import AuthJWT
 from fastapi_jwt_auth.exceptions import AuthJWTException
 from passlib.context import CryptContext
@@ -165,7 +166,7 @@ async def Upload_Sample_snapshot(folderName: str = Form(...), sample_idx: int = 
     crud.create_user_log(db, int(user_id), action=f"upload sample snapshot",
                          details=details)
 
-    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_snapshot"
+    base_upload_dir = f"../mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_snapshot"
     os.makedirs(base_upload_dir, exist_ok=True)
     responses = []
     for file in files:
@@ -205,7 +206,7 @@ async def Upload_Sample_image(folderName: str = Form(...), sample_idx: int = For
         # 否则，直接打印原字符串
         realfolderName = folderName
 
-    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_image"
+    base_upload_dir = f"../mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_image"
     os.makedirs(base_upload_dir, exist_ok=True)
     responses = []
     for file in files:
@@ -252,7 +253,7 @@ async def Upload_Sample_annoation(folderName: str = Form(...), sample_idx: int =
         # 否则，直接打印原字符串
         realfolderName = folderName
 
-    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_annoation"
+    base_upload_dir = f"../mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_annoation"
     os.makedirs(base_upload_dir, exist_ok=True)
     responses = []
     for file in files:
@@ -289,8 +290,8 @@ async def download_sample_file(request: Request):
     print(idx)
 
     # 确定要搜索的根文件夹路径
-    root_dir = r"/mnt/nfs/hndb/Sample_Files"
-    temp_dir = r"/mnt/nfs/hndb/temp/Sample_temp"
+    root_dir = r"../mnt/nfs/hndb/Sample_Files"
+    temp_dir = r"../mnt/nfs/hndb/temp/Sample_temp"
 
     # 检查匹配的文件夹
     matched_folder_paths = []  # 使用列表存储匹配的文件夹路径
@@ -327,7 +328,7 @@ async def get_sample_snapshot(request: Request):
     idx = data.get("idx")  # 获取 idx 参数
     print(idx)
 
-    FOLDER_PATH = r"/mnt/nfs/hndb/Sample_Files/"
+    FOLDER_PATH = r"../mnt/nfs/hndb/Sample_Files/"
     # 用于存储匹配的文件夹路径
     matched_folder_paths = []
 
@@ -667,7 +668,7 @@ class SWCfilepath(BaseModel):
 
 @app.post("/api/getSWC/")
 def get_swcimage(request: SWCfilepath, db: Session = Depends(get_db)):
-    globalpath1="/mnt/nfs/hndb"
+    globalpath1="../mnt/nfs/hndb"
     repath=globalpath1+request.ss
     mippath=globalpath1+"/"+request.mipforswc
     swcimage=get_swc(repath,mippath,request.cellid,db=db)
@@ -965,7 +966,7 @@ class MIP_SWCfilepath(BaseModel):
 
 @app.post("/api/getMIPSWC/")
 def get_mipswc_image(request: MIP_SWCfilepath, db: Session = Depends(get_db)):
-    globalpath="/mnt/nfs/hndb"
+    globalpath="../mnt/nfs/hndb"
     swc=globalpath+request.swc_file
     mip=globalpath+"/"+request.image_file
     # print(swc)
@@ -1024,7 +1025,7 @@ def find_storage_path(base_folder, filename):
 @app.post('/api/singleConvert/')  # 注意 API 路径前面需要加斜杠
 async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = Depends(get_db)):
     # 第一步，确定上传路径
-    uploadbase="/mnt/nfs/hndb/V3DRAW_16bit" # 16bit的根目录
+    uploadbase="../mnt/nfs/hndb/V3DRAW_16bit" # 16bit的根目录
     result_path = find_storage_path(uploadbase, file.filename)
     parts = result_path.split('//')
 
@@ -1065,7 +1066,7 @@ async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = 
     db.commit()
 
 
-    mipbase=r"/mnt/nfs/hndb/MIP_Downsample"
+    mipbase=r"../mnt/nfs/hndb/MIP_Downsample"
     directory1=os.path.join(mipbase,result_path).replace("\\", "/")
 
     outImage=os.path.join(directory1,image.replace(".v3draw",'.tif')).replace("\\", "/")
@@ -1078,7 +1079,7 @@ async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = 
     os.system(cmd)
 
     # 转8bit
-    bit8base = r"/mnt/nfs/hndb/V3DRAW_8bit"
+    bit8base = r"../mnt/nfs/hndb/V3DRAW_8bit"
     directory2 = os.path.join(bit8base, result_path).replace("\\", "/")
     outImage=os.path.join(directory2,'8bit_'+image).replace("\\", "/")
     # 创建文件
@@ -1108,7 +1109,7 @@ async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = 
     # 提交更改到数据库
     db.commit()
 
-    pbdbase = r"/mnt/nfs/hndb/V3DPBD"
+    pbdbase = r"../mnt/nfs/hndb/V3DPBD"
     directory3 = os.path.join(pbdbase, result_path).replace("\\", "/")
     outImage=os.path.join(directory3,image.replace(".v3draw",'.v3dpbd')).replace("\\", "/")
     # 创建文件
@@ -1134,7 +1135,7 @@ async def upload_2Dfiles(folderName: str = Form(...), files: List[UploadFile] = 
     # from fastapi import FastAPI, File, UploadFile, Form
 
     # UPLOAD_DIR = f"C:/Users/86132/Desktop/MIP_down/2d-batch/{folderName}"
-    UPLOAD_DIR ="/mnt/nfs/hndb/2D_raw_images"
+    UPLOAD_DIR ="../mnt/nfs/hndb/2D_raw_images"
     # 第一步，确定上传路径
     result_path = find_storage_path(UPLOAD_DIR, folderName)
     parts = result_path.split('//')
@@ -1211,11 +1212,11 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
 
         # 提取文件名和路径
     if len(file_path)==5:
-        PBDuploadbase=r"/mnt/nfs/hndb/V3DPBD"
+        PBDuploadbase=r"../mnt/nfs/hndb/V3DPBD"
         pbdpath=foundPBD.found_pbd_file(PBDuploadbase,file_path) # 新的相对路径
-        file_path = '/mnt/nfs/hndb/' + pbdpath
+        file_path = '../mnt/nfs/hndb/' + pbdpath
     else:
-        file_path = '/mnt/nfs/hndb/' + file_path
+        file_path = '../mnt/nfs/hndb/' + file_path
     
     # 提取文件名和路径
     file_name = os.path.basename(file_path)
@@ -1239,20 +1240,20 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="File not found")
     else:
         # 检查 temp 目录中是否有对应的 {cell_id}.zip 文件
-        zip_file_path = os.path.join('/mnt/nfs/hndb/temp', f"{cell_id}.zip")
+        zip_file_path = os.path.join('../mnt/nfs/hndb/temp', f"{cell_id}.zip")
         if os.path.exists(zip_file_path):
             # 如果有，直接返回 zip 文件
             print(f"{cell_id}.zip is in the temp folder")
             return FileResponse(path=zip_file_path, filename=os.path.basename(zip_file_path), media_type='application/zip')
 
         # 生成 .marker 文件
-        marker_file_path = os.path.join('/mnt/nfs/hndb/temp', f"{cell_id}.marker")
+        marker_file_path = os.path.join('../mnt/nfs/hndb/temp', f"{cell_id}.marker")
         with open(marker_file_path, 'w') as marker_file:
             marker_file.write("##x,y,z,radius,shape,name,comment,color_r,color_g,color_b\n")
             marker_file.write(f"{cell_data.soma_x},{cell_data.soma_y},{cell_data.soma_z},0,0,{cell_data.cell_id},0,255,0,0\n")
 
         # 打包 .v3dpbd 和 .marker 文件
-        zip_file_path = os.path.join('/mnt/nfs/hndb/temp', f"{cell_id}.zip")
+        zip_file_path = os.path.join('../mnt/nfs/hndb/temp', f"{cell_id}.zip")
         with zipfile.ZipFile(zip_file_path, 'w') as zipf:
             zipf.write(file_path, file_name)
             zipf.write(marker_file_path, os.path.basename(marker_file_path))
@@ -1268,7 +1269,7 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
 @app.get("/api/image/{file_path:path}")
 def get_image(file_path: str):
     try:
-        file_path = '/mnt/nfs/hndb/'+file_path
+        file_path = '../mnt/nfs/hndb/'+file_path
         # 检查文件是否存在
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="File not found")
@@ -1809,7 +1810,7 @@ def delete_sample_information(idx: int, Authorize: AuthJWT = Depends(), db: Sess
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 # 记录本照片上传路径
-UPLOAD_DIR = "/mnt/nfs/hndb/Record_Book_Pics"
+UPLOAD_DIR = "../mnt/nfs/hndb/Record_Book_Pics"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
@@ -1851,9 +1852,9 @@ async def get_record_book_pics():
 # TEMP_DIR = "Injection_Files/temp"
 # DB_UPLOAD_DIR = "Injection_Files/DB_Uploads"  # 设置CSV文件上传的目录
 
-ORIGINAL_UPLOAD_DIR = "/mnt/nfs/hndb/Injection_Files/Original"
-TEMP_DIR = "/mnt/nfs/hndb/Injection_Files/temp"
-DB_UPLOAD_DIR = "/mnt/nfs/hndb/Injection_Files/DB_Uploads"  # 设置CSV文件上传的目录
+ORIGINAL_UPLOAD_DIR = "../mnt/nfs/hndb/Injection_Files/Original"
+TEMP_DIR = "../mnt/nfs/hndb/Injection_Files/temp"
+DB_UPLOAD_DIR = "../mnt/nfs/hndb/Injection_Files/DB_Uploads"  # 设置CSV文件上传的目录
 
 # 存储多个文件到子文件夹
 @app.post("/api/upload_files")
@@ -2101,9 +2102,9 @@ async def download_folder(folder: str):
 # IMAGING_METADATA_DIR = "Imaging_Files/Metadata"
 # MARKER_FILES_DIR = "Imaging_Files/Markers"
 # ANNOTATION_FILES_DIR = "Imaging_Files/Annotations"
-IMAGING_METADATA_DIR = "/mnt/nfs/hndb/Imaging_Files/Metadata"
-MARKER_FILES_DIR = "/mnt/nfs/hndb/Imaging_Files/Markers"
-ANNOTATION_FILES_DIR = "/mnt/nfs/hndb/Imaging_Files/Annotations"
+IMAGING_METADATA_DIR = "../mnt/nfs/hndb/Imaging_Files/Metadata"
+MARKER_FILES_DIR = "../mnt/nfs/hndb/Imaging_Files/Markers"
+ANNOTATION_FILES_DIR = "../mnt/nfs/hndb/Imaging_Files/Annotations"
 
 # 确保目录存在
 os.makedirs(IMAGING_METADATA_DIR, exist_ok=True)
@@ -2333,6 +2334,124 @@ async def upload_imaging_info(
     return JSONResponse(content={"message": "Files uploaded successfully", "uploaded_files": uploaded_files})
 
 
+@app.get("/api/sample_preparation", response_model=List[SamplePreparationSchema])
+def get_all_samples(db: Session = Depends(get_db)):
+    return db.query(SamplePreparation).order_by(SamplePreparation.created_at.desc()).all()
+
+
+@app.get("/api/sample_preparation/{id}", response_model=SamplePreparationSchema)
+def get_sample(id: int, db: Session = Depends(get_db)):
+    db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == id).first()
+    if not db_sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+    return db_sample
+
+
+@app.post("/api/sample_preparation", response_model=SamplePreparationSchema)
+def create_sample(sample: SamplePreparationSchema, db: Session = Depends(get_db)):
+    db_sample = SamplePreparation(
+        sampleId=sample.sampleId,
+        tissueId=sample.tissueId,
+        rollId=sample.rollId,
+        sliceId=sample.sliceId,
+        blockId=sample.blockId,
+        channels=sample.channels,
+        needles=sample.needles,
+        status=sample.status,
+        operator=sample.operator
+    )
+    db.add(db_sample)
+    db.commit()
+    db.refresh(db_sample)
+    return db_sample
+
+@app.put("/api/sample_preparation/{id}", response_model=SamplePreparationSchema)
+def update_sample(id: int, sample: SamplePreparationSchema, db: Session = Depends(get_db)):
+    db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == id).first()
+    if not db_sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+
+    db_sample.sampleId = sample.sampleId
+    db_sample.tissueId = sample.tissueId
+    db_sample.rollId = sample.rollId
+    db_sample.sliceId = sample.sliceId
+    db_sample.blockId = sample.blockId
+    db_sample.channels = sample.channels
+    db_sample.needles = sample.needles
+    db_sample.status = sample.status
+    db_sample.operator = sample.operator
+
+    db.commit()
+    db.refresh(db_sample)
+    return db_sample
+
+@app.delete("/api/sample_preparation/{id}")
+def delete_sample(id: int, db: Session = Depends(get_db)):
+    db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == id).first()
+    if not db_sample:
+        raise HTTPException(status_code=404, detail="Sample not found")
+
+    # 删除SamplePreparation会自动删除关联的ImagingRecord（由于cascade和ondelete设置）
+    db.delete(db_sample)
+    db.commit()
+    return {"message": f"SamplePreparation {id} deleted successfully."}
+
+######################
+# ImagingRecord CRUD #
+######################
+
+@app.get("/api/imaging_records", response_model=List[ImagingRecordSchema])
+def get_all_imaging_records(db: Session = Depends(get_db)):
+    return db.query(ImagingRecord).all()
+
+@app.get("/api/imaging_records/{id}", response_model=ImagingRecordSchema)
+def get_imaging_record(id: int, db: Session = Depends(get_db)):
+    record = db.query(ImagingRecord).filter(ImagingRecord.id == id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="ImagingRecord not found")
+    return record
+
+@app.post("/api/imaging_records", response_model=ImagingRecordSchema)
+def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get_db)):
+    # 验证父表 ID 是否存在
+    print(record)
+    db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == record.id).first()
+    if not db_sample:
+        raise HTTPException(status_code=400, detail="Invalid sample_preparation_id")
+
+    # 创建记录
+    new_record = ImagingRecord(
+        sample_preparation_id=record.id,
+        producer=record.producer,
+        status=record.status
+    )
+    db.add(new_record)
+    db.commit()
+    db.refresh(new_record)
+    return new_record
+
+@app.put("/api/imaging_records/{id}", response_model=ImagingRecordSchema)
+def update_imaging_record(id: int, record: ImagingRecordSchema, db: Session = Depends(get_db)):
+    db_record = db.query(ImagingRecord).filter(ImagingRecord.id == id).first()
+    if not db_record:
+        raise HTTPException(status_code=404, detail="ImagingRecord not found")
+
+    db_record.producer = record.producer
+    db_record.status = record.status
+
+    db.commit()
+    db.refresh(db_record)
+    return db_record
+
+@app.delete("/api/imaging_records/{id}")
+def delete_imaging_record(id: int, db: Session = Depends(get_db)):
+    db_record = db.query(ImagingRecord).filter(ImagingRecord.id == id).first()
+    if not db_record:
+        raise HTTPException(status_code=404, detail="ImagingRecord not found")
+
+    db.delete(db_record)
+    db.commit()
+    return {"message": f"ImagingRecord {id} deleted successfully."}
 
 ### LLMs 部分
 

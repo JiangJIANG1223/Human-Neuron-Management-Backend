@@ -30,3 +30,7 @@ import_image_info.py
 *.py
 /Imaging_Files
 app/database.py
+app/database.py
+/.idea
+.DS_Store
+app/database.py

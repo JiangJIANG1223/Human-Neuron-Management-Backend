@@ -1,6 +1,6 @@
 # 定义了数据库模型HumanSingleCellTrackingTable，该模型与MySQL中的Human_SingleCell_TrackingTable表对应
 
-from sqlalchemy import Column, String, Integer, Text, Date, TIMESTAMP, func, DateTime, ForeignKey
+from sqlalchemy import Column, String, Integer, Text, Date, TIMESTAMP, func, DateTime, ForeignKey, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
@@ -160,3 +160,33 @@ class Imaging_Information(Base):
     idx = Column(Integer, primary_key=True, autoincrement=True)
 
     shooting_date = Column("shooting_date", String(255))
+
+class SamplePreparation(Base):
+    __tablename__ = "sample_preparation"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    sampleId = Column(String(50), nullable=False)
+    tissueId = Column(String(50))
+    rollId = Column(String(50))
+    sliceId = Column(String(50))
+    blockId = Column(String(50))
+    channels = Column(Integer)
+    needles = Column(Integer)
+    status = Column(Enum("initial", "injected", "imaged", "marked", "matched", name="status_enum"), default="initial")
+    operator = Column(String(50))
+    created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
+
+    # 关系定义，关联 imaging_records 表
+    imaging_records = relationship("ImagingRecord", back_populates="sample",cascade="all, delete-orphan", passive_deletes=True)
+
+# 子表 ImagingRecord
+class ImagingRecord(Base):
+    __tablename__ = "imaging_records"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    sample_preparation_id = Column(Integer, ForeignKey("sample_preparation.id", ondelete="CASCADE"))
+    producer = Column(String(100))
+    status = Column(Enum("initial", "injected", "imaged", "marked", "matched", name="status_enum"), default="initial")
+
+    # 关系定义
+    sample = relationship("SamplePreparation", back_populates="imaging_records")
