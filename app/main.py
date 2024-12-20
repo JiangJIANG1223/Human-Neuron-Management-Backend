@@ -2334,6 +2334,71 @@ async def upload_imaging_info(
     return JSONResponse(content={"message": "Files uploaded successfully", "uploaded_files": uploaded_files})
 
 
+@app.post("/api/upload_imaging_info_new")
+async def upload_imaging_info_new(
+        metadata_file: UploadFile = File,
+        db: Session = Depends(get_db)  # 注入数据库会话
+):
+    uploaded_files = []
+
+    # Function to validate sample numbers against the database
+    def validate_sample_number(file_name: str):
+        # 提取文件名中的 P 和 T 编号
+        file_pattern = r"^P(\d{5})-T(\d{3})-R\d{3}-S\d{3}(-B\d)?(-\d+)?"
+        match = re.match(file_pattern, file_name)
+        if not match:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid filename format for sample number check: {file_name}"
+            )
+        p_number, t_number = int(match.group(1)), int(match.group(2))
+        print(p_number, t_number)
+
+        # 查询数据库，验证 P 和 T 编号是否存在
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No matching sample found for P{p_number} and T{t_number}. Please check the file: {file_name}"
+            )
+
+    # Process metadata files
+
+    try:
+        file = metadata_file
+        # Validate filename format
+        print('filename',file.filename)
+        if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?-[A-Z_]{2,10}\.(xlsx|xml)$", file.filename):
+            raise HTTPException(status_code=400,
+                                detail="Invalid filename format for metadata file. Expected format: P00001-T001-R001-S001(-B1)(-1)-NAME.xlsx or .xml")
+
+        # Validate sample number in the file name
+        print('1')
+        validate_sample_number(file.filename)
+        print('2')
+
+        # Check if file already exists
+        file_path = os.path.join(IMAGING_METADATA_DIR, file.filename)
+        if os.path.exists(file_path):
+            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        uploaded_files.append(file.filename)
+    except HTTPException as e:
+        # Raise exception with uploaded_files
+        raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+
+    return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
+
 @app.get("/api/sample_preparation", response_model=List[SamplePreparationSchema])
 def get_all_samples(db: Session = Depends(get_db)):
     return db.query(SamplePreparation).order_by(SamplePreparation.created_at.desc()).all()
@@ -2414,7 +2479,6 @@ def get_imaging_record(id: int, db: Session = Depends(get_db)):
 @app.post("/api/imaging_records", response_model=ImagingRecordSchema)
 def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get_db)):
     # 验证父表 ID 是否存在
-    print(record)
     db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == record.id).first()
     if not db_sample:
         raise HTTPException(status_code=400, detail="Invalid sample_preparation_id")
