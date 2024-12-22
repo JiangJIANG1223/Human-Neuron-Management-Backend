@@ -2469,9 +2469,16 @@ def delete_sample(id: int, db: Session = Depends(get_db)):
 def get_all_imaging_records(db: Session = Depends(get_db)):
     return db.query(ImagingRecord).all()
 
-@app.get("/api/imaging_records/{id}", response_model=ImagingRecordSchema)
-def get_imaging_record(id: int, db: Session = Depends(get_db)):
-    record = db.query(ImagingRecord).filter(ImagingRecord.id == id).first()
+@app.get("/api/imaging_records/{sample_preparation_id}/{imaging_id}", response_model=ImagingRecordSchema)
+def get_imaging_record(sample_preparation_id: int, imaging_id: str, db: Session = Depends(get_db)):
+    record = (
+        db.query(ImagingRecord)
+        .filter(
+            ImagingRecord.sample_preparation_id == sample_preparation_id,
+            ImagingRecord.imaging_id == imaging_id,
+        )
+        .first()
+    )
     if not record:
         raise HTTPException(status_code=404, detail="ImagingRecord not found")
     return record
@@ -2479,27 +2486,53 @@ def get_imaging_record(id: int, db: Session = Depends(get_db)):
 @app.post("/api/imaging_records", response_model=ImagingRecordSchema)
 def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get_db)):
     # 验证父表 ID 是否存在
-    db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == record.id).first()
+    db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == record.sample_preparation_id).first()
     if not db_sample:
         raise HTTPException(status_code=400, detail="Invalid sample_preparation_id")
 
+    # 检查组合唯一性
+    existing_record = (
+        db.query(ImagingRecord)
+        .filter(
+            ImagingRecord.sample_preparation_id == record.sample_preparation_id,
+            ImagingRecord.imaging_id == record.imaging_id,
+        )
+        .first()
+    )
+    if existing_record:
+        raise HTTPException(status_code=400, detail="Duplicate ImagingRecord for this sample_preparation_id and imaging_id")
+
     # 创建记录
     new_record = ImagingRecord(
-        sample_preparation_id=record.id,
+        imaging_id=record.imaging_id,
+        sample_preparation_id=record.sample_preparation_id,
         producer=record.producer,
-        status=record.status
+        status=record.status,
     )
     db.add(new_record)
     db.commit()
     db.refresh(new_record)
     return new_record
 
-@app.put("/api/imaging_records/{id}", response_model=ImagingRecordSchema)
-def update_imaging_record(id: int, record: ImagingRecordSchema, db: Session = Depends(get_db)):
-    db_record = db.query(ImagingRecord).filter(ImagingRecord.id == id).first()
+@app.put("/api/imaging_records/{sample_preparation_id}/{imaging_id}", response_model=ImagingRecordSchema)
+def update_imaging_record(
+    sample_preparation_id: int,
+    imaging_id: str,
+    record: ImagingRecordSchema,
+    db: Session = Depends(get_db),
+):
+    db_record = (
+        db.query(ImagingRecord)
+        .filter(
+            ImagingRecord.sample_preparation_id == sample_preparation_id,
+            ImagingRecord.imaging_id == imaging_id,
+        )
+        .first()
+    )
     if not db_record:
         raise HTTPException(status_code=404, detail="ImagingRecord not found")
 
+    # 更新记录
     db_record.producer = record.producer
     db_record.status = record.status
 
@@ -2507,15 +2540,22 @@ def update_imaging_record(id: int, record: ImagingRecordSchema, db: Session = De
     db.refresh(db_record)
     return db_record
 
-@app.delete("/api/imaging_records/{id}")
-def delete_imaging_record(id: int, db: Session = Depends(get_db)):
-    db_record = db.query(ImagingRecord).filter(ImagingRecord.id == id).first()
+@app.delete("/api/imaging_records/{sample_preparation_id}/{imaging_id}")
+def delete_imaging_record(sample_preparation_id: int, imaging_id: str, db: Session = Depends(get_db)):
+    db_record = (
+        db.query(ImagingRecord)
+        .filter(
+            ImagingRecord.sample_preparation_id == sample_preparation_id,
+            ImagingRecord.imaging_id == imaging_id,
+        )
+        .first()
+    )
     if not db_record:
         raise HTTPException(status_code=404, detail="ImagingRecord not found")
 
     db.delete(db_record)
     db.commit()
-    return {"message": f"ImagingRecord {id} deleted successfully."}
+    return {"message": f"ImagingRecord with imaging_id '{imaging_id}' and sample_preparation_id '{sample_preparation_id}' deleted successfully."}
 
 ### LLMs 部分
 

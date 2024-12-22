@@ -1,6 +1,6 @@
 # 定义了数据库模型HumanSingleCellTrackingTable，该模型与MySQL中的Human_SingleCell_TrackingTable表对应
 
-from sqlalchemy import Column, String, Integer, Text, Date, TIMESTAMP, func, DateTime, ForeignKey, Enum
+from sqlalchemy import Column, String, Integer, Text, Date, TIMESTAMP, func, DateTime, ForeignKey, Enum, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
@@ -182,11 +182,12 @@ class SamplePreparation(Base):
 # 子表 ImagingRecord
 class ImagingRecord(Base):
     __tablename__ = "imaging_records"
-
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    imaging_id = Column(String(100))
     sample_preparation_id = Column(Integer, ForeignKey("sample_preparation.id", ondelete="CASCADE"))
     producer = Column(String(100))
-    status = Column(Enum("initial", "injected", "imaged", "marked", "matched", name="status_enum"), default="initial")
+    status = Column(Enum("imaged", "marked", "matched", name="status_enum"), default="initial")
 
     # 关系定义
     sample = relationship("SamplePreparation", back_populates="imaging_records")
+    __table_args__ = (UniqueConstraint('sample_preparation_id', 'imaging_id', name='unique_sample_imaging'),)

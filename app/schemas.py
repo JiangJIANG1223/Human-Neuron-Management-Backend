@@ -186,6 +186,8 @@ class SampleInfo(SampleInfoBase):
 
 class ImagingRecordSchema(BaseModel):
     id: Optional[int]
+    imaging_id: str
+    sample_preparation_id: int
     producer: str
     status: str
     class Config:
