@@ -2105,6 +2105,7 @@ async def download_folder(folder: str):
 IMAGING_METADATA_DIR = "../mnt/nfs/hndb/Imaging_Files/Metadata"
 MARKER_FILES_DIR = "../mnt/nfs/hndb/Imaging_Files/Markers"
 ANNOTATION_FILES_DIR = "../mnt/nfs/hndb/Imaging_Files/Annotations"
+IMAGING_MATCHTABLE_DIR = "../mnt/nfs/hndb/Imaging_Files/MatchTables"
 
 # 确保目录存在
 os.makedirs(IMAGING_METADATA_DIR, exist_ok=True)
@@ -2283,7 +2284,7 @@ async def upload_imaging_info(
                 )
 
             # Step 2: Validate 'name' column format
-            invalid_names = marker_df[~marker_df['name'].str.match(r'^C\d{5}$', na=False)]
+            invalid_names = marker_df[~marker_df['name'].str.match(r'^P\d{5}_T\d{3}_R\d{3}_S\d{3}_B\d?_C\d{5}$', na=False)]
             if not invalid_names.empty:
                 raise HTTPException(
                     status_code=400,
@@ -2334,8 +2335,8 @@ async def upload_imaging_info(
     return JSONResponse(content={"message": "Files uploaded successfully", "uploaded_files": uploaded_files})
 
 
-@app.post("/api/upload_imaging_info_new")
-async def upload_imaging_info_new(
+@app.post("/api/upload_imaging_metadata")
+async def upload_imaging_metadata(
         metadata_file: UploadFile = File,
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
@@ -2372,7 +2373,7 @@ async def upload_imaging_info_new(
         file = metadata_file
         # Validate filename format
         print('filename',file.filename)
-        if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?-[A-Z_]{2,10}\.(xlsx|xml)$", file.filename):
+        if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?-[A-Za-z_]{2,10}\.(xlsx|xml)$", file.filename):
             raise HTTPException(status_code=400,
                                 detail="Invalid filename format for metadata file. Expected format: P00001-T001-R001-S001(-B1)(-1)-NAME.xlsx or .xml")
 
@@ -2398,6 +2399,273 @@ async def upload_imaging_info_new(
 
 
     return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
+
+
+@app.post("/api/upload_imaging_marker")
+async def upload_imaging_marker(
+        marker_file: UploadFile = File,
+        db: Session = Depends(get_db)  # 注入数据库会话
+):
+    uploaded_files = []
+
+    # Function to validate sample numbers against the database
+    def validate_sample_number(file_name: str):
+        # 提取文件名中的 P 和 T 编号
+        file_pattern = r"^P(\d{5})-T(\d{3})-R\d{3}-S\d{3}(-B\d)?(-\d+)?"
+        match = re.match(file_pattern, file_name)
+        if not match:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid filename format for sample number check: {file_name}"
+            )
+        p_number, t_number = int(match.group(1)), int(match.group(2))
+        print(p_number, t_number)
+
+        # 查询数据库，验证 P 和 T 编号是否存在
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No matching sample found for P{p_number} and T{t_number}. Please check the file: {file_name}"
+            )
+
+    # Process metadata files
+
+    try:
+        file = marker_file
+        # Validate filename and extract P, T, R, S, B
+        file_pattern = r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?(-[A-Za-z_]{2,10})?\.marker$"
+        match = re.match(file_pattern, file.filename)
+        if not match:
+            raise HTTPException(status_code=400,
+                                detail="Invalid filename format for marker file. Expected format: P00001-T001-R001-S001(-B1)(-1).marker")
+        print(1)
+        file_parts = match.group(0)
+        file_P = file_parts[0]
+        file_T = file_parts[1]
+        file_R = file_parts[2]
+        file_S = file_parts[3]
+        file_B = file_parts[4] if file_parts[4] else ''
+        file_number = file_B.lstrip('-B') if file_B else ''
+
+        # Validate sample number in the file name
+        validate_sample_number(file.filename)
+        print(2)
+        # Read marker file content
+        file.file.seek(0)
+        lines = [line.decode('utf-8').strip() for line in file.file.readlines()]
+
+        try:
+            marker_df = read_marker_lines(lines)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Error reading marker file '{file.filename}': {str(e)}")
+        print(3)
+        # Check required columns
+        required_columns = {'name', 'x', 'y', 'z'}
+        if not required_columns.issubset(marker_df.columns):
+            raise HTTPException(status_code=400,
+                                detail=f"Marker file '{file.filename}' is missing required columns: {required_columns}")
+        print(4)
+        # Validate 'name' column entries
+        for name_entry in marker_df['name']:
+            # Add a type check for name_entry
+            if not isinstance(name_entry, str):
+                print(name_entry)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{file.filename}' File name and its 'name' column do not match."
+                )
+            name_pattern = r"^(P\d{5})_(T\d{3})_(R\d{3})_(S\d{3})(_B\d)??(_\d+)?(_[A-Za-z_]{2,10})?_C\d+"
+            name_match = re.match(name_pattern, name_entry)
+            if not name_match:
+                raise HTTPException(status_code=400,
+                                    detail=f"Invalid 'name' entry in marker file '{file.filename}': {name_entry}")
+            name_parts = name_match.group(0)
+            name_P = name_parts[0]
+            name_T = name_parts[1]
+            name_R = name_parts[2]
+            name_S = name_parts[3]
+            name_B = name_parts[4] if name_parts[4] else ''
+            name_number = name_B.lstrip('_B') if name_B else ''
+
+            # Compare file_P with name_P, etc.
+            if (
+                    file_P != name_P or file_T != name_T or file_R != name_R or file_S != name_S or file_number != name_number):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'{file.filename}' File name and its 'name' column do not match. Please check."
+                )
+        print(5)
+        # Step 1: Check for duplicate 'C' identifiers
+        if marker_df['name'].duplicated().any():
+            duplicate_names = marker_df[marker_df['name'].duplicated()]['name'].unique()
+            raise HTTPException(
+                status_code=400,
+                # detail=f"Duplicate 'C' identifiers found in marker file '{file.filename}': {', '.join(duplicate_names)}"
+                detail="Duplicate C numbers found in 'name' column. Please check."
+            )
+
+        # Step 2: Validate 'name' column format
+        invalid_names = marker_df[~marker_df['name'].str.match(r'^P\d{5}_T\d{3}_R\d{3}_S\d{3}(_B\d)?(_\d+)?(_[A-Za-z_]{2,10})?_C\d{5}$', na=False)]
+        if not invalid_names.empty:
+            raise HTTPException(
+                status_code=400,
+                # detail=f"Invalid 'name' entries in marker file '{file.filename}': {', '.join(invalid_names['name'].unique())}"
+                detail="Invalid C number in the 'name' column. Please check."
+            )
+
+        # Check if file already exists
+        file_path = os.path.join(MARKER_FILES_DIR, file.filename)
+        if os.path.exists(file_path):
+            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+        print(6)
+        # Save file
+        file.file.seek(0)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        uploaded_files.append(file.filename)
+    except HTTPException as e:
+        # Raise exception with uploaded_files
+        raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+    return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
+
+@app.post("/api/upload_imaging_metadata")
+async def upload_imaging_metadata(
+        metadata_file: UploadFile = File,
+        db: Session = Depends(get_db)  # 注入数据库会话
+):
+    uploaded_files = []
+
+    # Function to validate sample numbers against the database
+    def validate_sample_number(file_name: str):
+        # 提取文件名中的 P 和 T 编号
+        file_pattern = r"^P(\d{5})-T(\d{3})-R\d{3}-S\d{3}(-B\d)?(-\d+)?"
+        match = re.match(file_pattern, file_name)
+        if not match:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid filename format for sample number check: {file_name}"
+            )
+        p_number, t_number = int(match.group(1)), int(match.group(2))
+        print(p_number, t_number)
+
+        # 查询数据库，验证 P 和 T 编号是否存在
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No matching sample found for P{p_number} and T{t_number}. Please check the file: {file_name}"
+            )
+
+    # Process metadata files
+
+    try:
+        file = metadata_file
+        # Validate filename format
+        print('filename',file.filename)
+        if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?-[A-Za-z_]{2,10}\.(xlsx|xml)$", file.filename):
+            raise HTTPException(status_code=400,
+                                detail="Invalid filename format for metadata file. Expected format: P00001-T001-R001-S001(-B1)(-1)-NAME.xlsx or .xml")
+
+        # Validate sample number in the file name
+        print('1')
+        validate_sample_number(file.filename)
+        print('2')
+
+        # Check if file already exists
+        file_path = os.path.join(IMAGING_METADATA_DIR, file.filename)
+        if os.path.exists(file_path):
+            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        uploaded_files.append(file.filename)
+    except HTTPException as e:
+        # Raise exception with uploaded_files
+        raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+
+    return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
+
+@app.post("/api/upload_imaging_match_table")
+async def upload_imaging_match_table(
+        matchtable_file: UploadFile = File,
+        db: Session = Depends(get_db)  # 注入数据库会话
+):
+    uploaded_files = []
+
+    # Function to validate sample numbers against the database
+    def validate_sample_number(file_name: str):
+        # 提取文件名中的 P 和 T 编号
+        file_pattern = r"^P(\d{5})-T(\d{3})-R\d{3}-S\d{3}(-B\d)?(-\d+)?"
+        match = re.match(file_pattern, file_name)
+        if not match:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid filename format for sample number check: {file_name}"
+            )
+        p_number, t_number = int(match.group(1)), int(match.group(2))
+        print(p_number, t_number)
+
+        # 查询数据库，验证 P 和 T 编号是否存在
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No matching sample found for P{p_number} and T{t_number}. Please check the file: {file_name}"
+            )
+
+    # Process metadata files
+
+    try:
+        file = matchtable_file
+        # Validate filename format
+        print('filename',file.filename)
+        if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?(-[A-Za-z_]{2,10})?-matched\.csv$", file.filename):
+            raise HTTPException(status_code=400,
+                                detail="Invalid filename format for match table file. Expected format: P00001-T001-R001-S001(-B1)(-1)-NAME.xlsx or .xml")
+
+        # Validate sample number in the file name
+        print('1')
+        validate_sample_number(file.filename)
+        print('2')
+
+        # Check if file already exists
+        file_path = os.path.join(IMAGING_MATCHTABLE_DIR, file.filename)
+        if os.path.exists(file_path):
+            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        uploaded_files.append(file.filename)
+    except HTTPException as e:
+        # Raise exception with uploaded_files
+        raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+
+    return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
+
 
 @app.get("/api/sample_preparation", response_model=List[SamplePreparationSchema])
 def get_all_samples(db: Session = Depends(get_db)):
