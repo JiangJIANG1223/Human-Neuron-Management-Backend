@@ -51,7 +51,8 @@ app.add_middleware(
 )
 
 # 挂载 static 目录，服务静态文件
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory="../mnt/nfs/hndb/SamplePreparation"), name="static")
 
 # Dependency to get the DB session
 def get_db():
@@ -2824,6 +2825,74 @@ def delete_imaging_record(sample_preparation_id: int, imaging_id: str, db: Sessi
     db.delete(db_record)
     db.commit()
     return {"message": f"ImagingRecord with imaging_id '{imaging_id}' and sample_preparation_id '{sample_preparation_id}' deleted successfully."}
+
+
+@app.post("/api/upload_imaging_map")
+async def upload_imaging_map(imaging_map_file: UploadFile = File):
+    responses = []
+    file_name = imaging_map_file.filename
+    if "-map" in file_name:
+        folder_name = file_name.split("-map")[0]  # 提取-map之前的部分
+    else:
+        return JSONResponse(content={"message": "Invalid file name format", "file": file_name}, status_code=400)
+    # 构建保存路径
+    base_upload_dir = f"../mnt/nfs/hndb/SamplePreparation/{folder_name}"
+    os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
+
+    # 保存文件
+    file_location = os.path.join(base_upload_dir, file_name)
+    with open(file_location, "wb+") as file_object:
+        file_object.write(await imaging_map_file.read())
+
+    responses.append(file_location)
+
+
+    return JSONResponse(content={"message": "Upload successful!", "files": responses})
+
+
+@app.get("/api/get_imaging_map/{sample_preparation_id}")
+def get_imaging_map(sample_preparation_id: str):
+    base_path = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
+
+    if not os.path.exists(base_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # 检查是否存在 -map 文件
+    for ext in ["png", "jpeg", "jpg"]:
+        file_path = os.path.join(base_path, f"{sample_preparation_id}_map.{ext}")
+        if os.path.exists(file_path):
+            # 直接返回文件
+            return FileResponse(file_path, media_type=f"image/{ext}", filename=os.path.basename(file_path))
+
+    raise HTTPException(status_code=404, detail="Image not found")
+
+
+@app.get("/api/get_imaging_mip/{sample_preparation_id}/{imaging_id}")
+def get_imaging_mip(sample_preparation_id: str,imaging_id:str):
+    base_path = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
+
+    if not os.path.exists(base_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
+    if imaging_id.isdigit():
+        imaging_id_part = f"-{imaging_id}"
+    elif imaging_id == "--":
+        imaging_id_part = ""
+    else:
+        raise HTTPException(status_code=400, detail="Invalid imaging_id")
+
+    # 检查是否存在 -map 文件
+    for ext in ["tif"]:
+        file_path = os.path.join(base_path, f"{sample_preparation_id}{imaging_id_part}_MIP.{ext}")
+        if file_path.endswith('.tif'):
+            jpg_file_path = file_path.replace('.tif', '.jpg')
+            if not os.path.exists(jpg_file_path):
+                with Image.open(file_path) as img:
+                    img.convert("RGB").save(jpg_file_path, "JPEG")
+            if os.path.exists(jpg_file_path):
+                # 直接返回文件
+                return FileResponse(jpg_file_path, media_type=f"image/{ext}", filename=os.path.basename(file_path))
+
+    raise HTTPException(status_code=404, detail="Image not found")
 
 ### LLMs 部分
 
