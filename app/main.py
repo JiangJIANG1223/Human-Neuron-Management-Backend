@@ -2894,6 +2894,237 @@ def get_imaging_mip(sample_preparation_id: str,imaging_id:str):
 
     raise HTTPException(status_code=404, detail="Image not found")
 
+@app.get("/api/get_injection_file/{sample_preparation_id}")
+def get_injection_file(sample_preparation_id: str):
+    base_path = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
+
+    if not os.path.exists(base_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    # 检查是否存在 -map 文件
+    for ext in ["csv"]:
+        file_path = os.path.join(base_path, f"{sample_preparation_id}.{ext}")
+        if os.path.exists(file_path):
+            # 直接返回文件
+            return FileResponse(file_path, media_type=f"text/{ext}", filename=os.path.basename(file_path),headers={"Content-Disposition": f"attachment; filename={sample_preparation_id}.{ext}"})
+
+    raise HTTPException(status_code=404, detail="Image not found")
+
+@app.post("/api/upload_imaging_data/{sample_preparation_id}/{imaging_id}")
+async def upload_imaging_data(imaging_data_file: UploadFile = File,sample_preparation_id:str = '',imaging_id:str = ''):
+    responses = []
+    file_name = imaging_data_file.filename
+    # 构建保存路径
+    base_upload_dir = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+    os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
+
+    # 保存文件
+    file_location = os.path.join(base_upload_dir, file_name)
+    with open(file_location, "wb+") as file_object:
+        file_object.write(await imaging_data_file.read())
+
+    responses.append(file_location)
+
+
+    return JSONResponse(content={"message": "Upload successful!", "files": responses})
+
+@app.post("/api/upload_bright_field_fata/{sample_preparation_id}")
+async def upload_bright_field_data(bright_field_data_file: UploadFile = File,sample_preparation_id:str = ''):
+    responses = []
+    file_name = bright_field_data_file.filename
+    # 构建保存路径
+    base_upload_dir = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
+    os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
+    # 保存文件
+    file_location = os.path.join(base_upload_dir, file_name)
+    with open(file_location, "wb+") as file_object:
+        file_object.write(await bright_field_data_file.read());
+    responses.append(file_location)
+    return JSONResponse(content={"message": "Upload successful!", "files": responses})
+
+
+@app.post("/api/upload_injection_file")
+async def upload_injection_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    sample_preparation_id = os.path.splitext(file.filename)[0]
+    upload_path = os.path.join("../mnt/nfs/hndb/SamplePreparation", sample_preparation_id)
+    os.makedirs(upload_path, exist_ok=True)
+    file_path = os.path.join(upload_path, file.filename)
+
+    # 将文件内容保存到内存中，以便后续操作
+    file_content = file.file.read()
+
+    # 解析文件名
+    file_name_without_ext = file.filename.rsplit('.', 1)[0]
+    pattern = re.match(r"^(P\d{5})-(T\d{3})-(R\d{3})-(S\d{3})(?:-(B\d))?$", file_name_without_ext)
+    if not pattern:
+        raise HTTPException(status_code=400, detail="Invalid file name format. Please check the format and try again.")
+
+    # 提取 P, T, R, S, (B) 部分
+    p_part, t_part, r_part, s_part, b_part = pattern.groups()
+    prefix = f"{p_part}_{t_part}_{r_part}_{s_part}"
+    if b_part:
+        prefix += f"_{b_part}"
+    prefix_pattern = re.compile(rf"^{re.escape(prefix)}_C\d+$")
+
+    try:
+        # 读取 CSV 文件内容并将其转换为 DataFrame
+        df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding='utf-8')
+
+        # 检查 CSV 文件中是否有 ID 列
+        if 'Id' not in df.columns:
+            raise HTTPException(status_code=400, detail="CSV file must contain an ID column.")
+
+        # 检查 ID 列中的所有值是否符合文件名中的格式
+        if not df['Id'].apply(lambda x: bool(prefix_pattern.match(str(x)))).all():
+            raise HTTPException(status_code=400, detail="File name does not match its ID column.")
+
+        # 新增检查 2：C 编号是否有重复
+        c_numbers = df['Id'].apply(lambda x: re.search(r"C\d{5}$", str(x)).group())
+        if c_numbers.duplicated().any():
+            raise HTTPException(status_code=400,
+                                detail="Duplicate C numbers found in ID column. Please check and re-upload.")
+
+        # 检查所有必需列是否存在
+        missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing_columns)}")
+
+        # 检查必需列的空值（perfusion_time 和 AddingTime 除外）
+        empty_columns = [col for col in REQUIRED_COLUMNS if
+                         col not in ["perfusion_time", "AddingTime"] and df[col].isnull().any()]
+        if empty_columns:
+            raise HTTPException(status_code=400, detail=f"Columns with missing values: {', '.join(empty_columns)}")
+
+        # 从文件名中提取数值
+        p_number = int(p_part[1:])  # 取出 P 部分的数值
+        t_number = int(t_part[1:])  # 取出 T 部分的数值
+
+        # 查询数据库，验证 P 和 T 编号是否存在，只比较数值部分
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,  # 去掉 "P" 并只比较数值
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number  # 去掉 "T" 并只比较数值
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(status_code=400, detail="No matching sample found.")
+
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
+
+    return {"message": "CSV uploaded and stored in the database successfully"}
+
+@app.post("/api/insert_injection_file_to_db/{sample_preparation_id}")
+async def insert_injection_file_to_db(sample_preparation_id: str, db: Session = Depends(get_db)):
+    file_path = "../mnt/nfs/hndb/SamplePreparation"
+    # 构建文件路径
+    file_path = os.path.join(file_path, sample_preparation_id, f"{sample_preparation_id}.csv")
+
+    # 检查文件是否存在
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found at {file_path}")
+
+    try:
+        # 读取 CSV 文件内容并将其转换为 DataFrame
+        df = pd.read_csv(file_path, encoding='utf-8')
+
+        # 检查 CSV 文件中是否有 ID 列
+        if 'Id' not in df.columns:
+            raise HTTPException(status_code=400, detail="CSV file must contain an ID column.")
+
+        # 校验 CSV 文件数据格式
+        file_name_without_ext = sample_preparation_id
+        pattern = re.match(r"^(P\d{5})-(T\d{3})-(R\d{3})-(S\d{3})(?:-(B\d))?$", file_name_without_ext)
+        if not pattern:
+            raise HTTPException(status_code=400, detail="Invalid sample_preparation_id format.")
+
+        # 提取 P, T, R, S, (B) 部分
+        p_part, t_part, r_part, s_part, b_part = pattern.groups()
+        prefix = f"{p_part}_{t_part}_{r_part}_{s_part}"
+        if b_part:
+            prefix += f"_{b_part}"
+        prefix_pattern = re.compile(rf"^{re.escape(prefix)}_C\d+$")
+
+        # 检查 ID 列中的所有值是否符合文件名中的格式
+        if not df['Id'].apply(lambda x: bool(prefix_pattern.match(str(x)))).all():
+            raise HTTPException(status_code=400, detail="File name does not match its ID column.")
+
+        # 检查是否有重复的 C 编号
+        c_numbers = df['Id'].apply(lambda x: re.search(r"C\d{5}$", str(x)).group())
+        if c_numbers.duplicated().any():
+            raise HTTPException(status_code=400, detail="Duplicate C numbers found in ID column.")
+
+        # 检查所有必需列是否存在
+        REQUIRED_COLUMNS = ['Id', 'dye_name', 'sample_preparation_date', 'perfusion_date']  # 示例必需列
+        missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing_columns)}")
+
+        # 检查日期列格式
+        date_columns = ['sample_preparation_date', 'perfusion_date']
+        for date_col in date_columns:
+            try:
+                df[date_col] = pd.to_datetime(df[date_col], errors='raise', infer_datetime_format=True)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Unable to convert date format in column {date_col}: {str(e)}")
+
+        # 修改：处理 ihc_category 列
+        cutoff_date = pd.to_datetime('2024-10-29')
+
+        def process_ihc_category(row):
+            if row['perfusion_date'] <= cutoff_date:
+                # 现有逻辑
+                if row['dye_name'] == 'Lucifer Yellow':
+                    return 'Lucifer Yellow'
+                else:
+                    return '-'
+            else:
+                # 保留原始值，不进行处理
+                return row['ihc_category']
+
+        df['ihc_category'] = df.apply(process_ihc_category, axis=1)
+
+        df['sample_preparation_date'] = df['sample_preparation_date'].dt.strftime('%Y-%m-%d')
+        df['perfusion_date'] = df['perfusion_date'].dt.strftime('%Y-%m-%d')
+
+        # 添加一个新列 file_name 并将所有行的值设置为当前文件名
+        df['file_name'] = f'{sample_preparation_id}.csv'
+
+        df = df.replace({np.nan: '--'})
+
+        # 尝试将 DataFrame 插入数据库
+        table = Table('injection_table_20241028', MetaData(), autoload_with=db.bind)
+        try:
+            for _, row in df.iterrows():
+                # print(row)
+                stmt = insert(table).values(row.to_dict())
+                db.execute(stmt)
+
+            db.commit()
+
+        except SQLAlchemyError as db_error:
+            print(f"Database insertion failed: {db_error}")
+            raise HTTPException(status_code=400, detail=f"Database insertion failed: {str(db_error)}")
+
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
+
+    return {"message": "CSV uploaded and stored in the database successfully"}
+
+@app.get("/api/check_sample_file_exists")
+async def check_sample_file_exists(filename: str):
+    folder = f"../mnt/nfs/hndb/SamplePreparation/{filename.split('.')[0]}"
+    file_path = os.path.join(DB_UPLOAD_DIR, filename)
+    if os.path.exists(file_path):
+        return {"exists": True}
+    return {"exists": False}
 ### LLMs 部分
 
 # 配置 Redis
