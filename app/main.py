@@ -2831,8 +2831,8 @@ def delete_imaging_record(sample_preparation_id: int, imaging_id: str, db: Sessi
 async def upload_imaging_map(imaging_map_file: UploadFile = File):
     responses = []
     file_name = imaging_map_file.filename
-    if "-map" in file_name:
-        folder_name = file_name.split("-map")[0]  # 提取-map之前的部分
+    if "-map" in file_name: 
+        folder_name = file_name.split("_map")[0]  # 提取-map之前的部分
     else:
         return JSONResponse(content={"message": "Invalid file name format", "file": file_name}, status_code=400)
     # 构建保存路径
@@ -3121,7 +3121,8 @@ async def insert_injection_file_to_db(sample_preparation_id: str, db: Session = 
 @app.get("/api/check_sample_file_exists")
 async def check_sample_file_exists(filename: str):
     folder = f"../mnt/nfs/hndb/SamplePreparation/{filename.split('.')[0]}"
-    file_path = os.path.join(DB_UPLOAD_DIR, filename)
+    file_path = os.path.join(folder, filename)
+    print(folder)
     if os.path.exists(file_path):
         return {"exists": True}
     return {"exists": False}
