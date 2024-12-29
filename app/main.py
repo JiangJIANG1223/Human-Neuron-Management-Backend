@@ -2928,20 +2928,30 @@ async def upload_imaging_data(imaging_data_file: UploadFile = File,sample_prepar
 
     return JSONResponse(content={"message": "Upload successful!", "files": responses})
 
-@app.post("/api/upload_bright_field_fata/{sample_preparation_id}")
-async def upload_bright_field_data(bright_field_data_file: UploadFile = File,sample_preparation_id:str = ''):
-    responses = []
-    file_name = bright_field_data_file.filename
-    # 构建保存路径
+@app.post("/api/upload_bright_field_data/{sample_preparation_id}")
+async def upload_bright_field_data(
+    sample_preparation_id: str,
+    bright_field_data_files: List[UploadFile] = File(...)
+):
     base_upload_dir = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
     os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
-    # 保存文件
-    file_location = os.path.join(base_upload_dir, file_name)
-    with open(file_location, "wb+") as file_object:
-        file_object.write(await bright_field_data_file.read());
-    responses.append(file_location)
-    return JSONResponse(content={"message": "Upload successful!", "files": responses})
 
+    saved_files = []
+    for bf_file in bright_field_data_files:
+        file_name = bf_file.filename
+        print(file_name)
+        file_path = os.path.join(base_upload_dir, file_name)
+
+        # 保存文件
+        with open(file_path, "wb") as file_object:
+            file_object.write(await bf_file.read())
+
+        saved_files.append(file_path)
+
+    return JSONResponse(content={
+        "message": "Upload successful!",
+        "uploaded_files": saved_files
+    })
 
 @app.post("/api/upload_injection_file")
 async def upload_injection_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
