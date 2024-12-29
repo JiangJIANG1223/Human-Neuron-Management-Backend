@@ -2335,10 +2335,83 @@ async def upload_imaging_info(
 
     return JSONResponse(content={"message": "Files uploaded successfully", "uploaded_files": uploaded_files})
 
+@app.post("/api/upload_imaging_annotation_file/{sample_preparation_id}/{imaging_id}")
+async def upload_imaging_annotation_file(
+        annotation_file: UploadFile = File,
+        sample_preparation_id:str = '',
+        imaging_id:str='',
+        db: Session = Depends(get_db)  # 注入数据库会话
+):
+    uploaded_files = []
 
-@app.post("/api/upload_imaging_metadata")
+    # Function to validate sample numbers against the database
+    def validate_sample_number(file_name: str):
+        # 提取文件名中的 P 和 T 编号
+        file_pattern = r"^P(\d{5})-T(\d{3})-R\d{3}-S\d{3}(-B\d)?(-\d+)?"
+        match = re.match(file_pattern, file_name)
+        if not match:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid filename format for sample number check: {file_name}"
+            )
+        p_number, t_number = int(match.group(1)), int(match.group(2))
+        print(p_number, t_number)
+
+        # 查询数据库，验证 P 和 T 编号是否存在
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No matching sample found for P{p_number} and T{t_number}. Please check the file: {file_name}"
+            )
+
+    # Process metadata files
+
+    try:
+        file = annotation_file
+        # Validate filename format
+        print('filename',file.filename)
+        if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?(-[A-Za-z_]{2,10})?.apo$", file.filename):
+            raise HTTPException(status_code=400,
+                                detail="Invalid filename format for match table file. Expected format: P00001-T001-R001-S001(-B1)(-1)(-NAME)-matched.csv")
+
+        # Validate sample number in the file name
+
+        validate_sample_number(file.filename)
+
+        if imaging_id == '--':
+            folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        else:
+            folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+        os.makedirs(folder, exist_ok=True)
+        # Check if file already exists
+        file_path = os.path.join(folder, file.filename)
+        # if os.path.exists(file_path):
+        #     raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+
+        # Save file
+        with open(file_path, "wb+") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        uploaded_files.append(file.filename)
+    except HTTPException as e:
+        # Raise exception with uploaded_files
+        raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
+
+
+    return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
+
+
+@app.post("/api/upload_imaging_metadata/{sample_preparation_id}/{imaging_id}")
 async def upload_imaging_metadata(
         metadata_file: UploadFile = File,
+        sample_preparation_id:str = '',
+        imaging_id:str = '',
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
     uploaded_files = []
@@ -2382,14 +2455,19 @@ async def upload_imaging_metadata(
         print('1')
         validate_sample_number(file.filename)
         print('2')
-
+        if imaging_id == '--':
+            folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        else:
+            folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
         # Check if file already exists
-        file_path = os.path.join(IMAGING_METADATA_DIR, file.filename)
-        if os.path.exists(file_path):
-            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+        os.makedirs(folder, exist_ok=True)
+        file_path = os.path.join(folder, file.filename)
+        #放到前端做重复检查以及是否覆盖
+        # if os.path.exists(file_path):
+        #     raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
 
         # Save file
-        with open(file_path, "wb") as buffer:
+        with open(file_path, "wb+") as buffer:
             shutil.copyfileobj(file.file, buffer)
         uploaded_files.append(file.filename)
     except HTTPException as e:
@@ -2399,7 +2477,7 @@ async def upload_imaging_metadata(
         raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
 
 
-    return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
+    return JSONResponse(status_code=200, content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
 
 
 @app.post("/api/upload_imaging_marker")
@@ -2537,74 +2615,11 @@ async def upload_imaging_marker(
 
     return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
 
-@app.post("/api/upload_imaging_metadata")
-async def upload_imaging_metadata(
-        metadata_file: UploadFile = File,
-        db: Session = Depends(get_db)  # 注入数据库会话
-):
-    uploaded_files = []
-
-    # Function to validate sample numbers against the database
-    def validate_sample_number(file_name: str):
-        # 提取文件名中的 P 和 T 编号
-        file_pattern = r"^P(\d{5})-T(\d{3})-R\d{3}-S\d{3}(-B\d)?(-\d+)?"
-        match = re.match(file_pattern, file_name)
-        if not match:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid filename format for sample number check: {file_name}"
-            )
-        p_number, t_number = int(match.group(1)), int(match.group(2))
-        print(p_number, t_number)
-
-        # 查询数据库，验证 P 和 T 编号是否存在
-        sample_info = db.query(models.Sample_Information).filter(
-            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
-            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
-        ).first()
-
-        if not sample_info:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No matching sample found for P{p_number} and T{t_number}. Please check the file: {file_name}"
-            )
-
-    # Process metadata files
-
-    try:
-        file = metadata_file
-        # Validate filename format
-        print('filename',file.filename)
-        if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?-[A-Za-z_]{2,10}\.(xlsx|xml)$", file.filename):
-            raise HTTPException(status_code=400,
-                                detail="Invalid filename format for metadata file. Expected format: P00001-T001-R001-S001(-B1)(-1)-NAME.xlsx or .xml")
-
-        # Validate sample number in the file name
-        print('1')
-        validate_sample_number(file.filename)
-        print('2')
-
-        # Check if file already exists
-        file_path = os.path.join(IMAGING_METADATA_DIR, file.filename)
-        if os.path.exists(file_path):
-            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
-
-        # Save file
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        uploaded_files.append(file.filename)
-    except HTTPException as e:
-        # Raise exception with uploaded_files
-        raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
-
-
-    return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
-
-@app.post("/api/upload_imaging_match_table")
+@app.post("/api/upload_imaging_match_table/{sample_preparation_id}/{imaging_id}")
 async def upload_imaging_match_table(
         matchtable_file: UploadFile = File,
+        sample_preparation_id:str = '',
+        imaging_id:str='',
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
     uploaded_files = []
@@ -2642,17 +2657,21 @@ async def upload_imaging_match_table(
         print('filename',file.filename)
         if not re.match(r"^P\d{5}-T\d{3}-R\d{3}-S\d{3}(-B\d)?(-\d+)?(-[A-Za-z_]{2,10})?-matched\.csv$", file.filename):
             raise HTTPException(status_code=400,
-                                detail="Invalid filename format for match table file. Expected format: P00001-T001-R001-S001(-B1)(-1)-NAME.xlsx or .xml")
+                                detail="Invalid filename format for match table file. Expected format: P00001-T001-R001-S001(-B1)(-1)(-NAME)-matched.csv")
 
         # Validate sample number in the file name
         print('1')
         validate_sample_number(file.filename)
         print('2')
-
+        if imaging_id == '--':
+            folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        else:
+            folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+        os.makedirs(folder, exist_ok=True)
         # Check if file already exists
-        file_path = os.path.join(IMAGING_MATCHTABLE_DIR, file.filename)
-        if os.path.exists(file_path):
-            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
+        file_path = os.path.join(folder, file.filename)
+        # if os.path.exists(file_path):
+        #     raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
 
         # Save file
         with open(file_path, "wb") as buffer:
@@ -2802,12 +2821,29 @@ def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get
     if existing_record:
         raise HTTPException(status_code=400, detail="Duplicate ImagingRecord for this sample_preparation_id and imaging_id")
 
+    conflict_record = (
+        db.query(ImagingRecord)
+        .filter(
+            ImagingRecord.sample_preparation_id == record.sample_preparation_id,
+            ImagingRecord.imaging_id == '--',
+        )
+        .first()
+    )
+    if conflict_record:
+        raise HTTPException(status_code=400,
+                            detail="Invalid ImagingRecord for this sample_preparation_id and imaging_id")
+
     # 创建记录
     new_record = ImagingRecord(
         imaging_id=record.imaging_id,
         sample_preparation_id=record.sample_preparation_id,
         producer=record.producer,
         status=record.status,
+        Channels=1,
+        Z_Size = 0.0,
+        Y_Size = 0.0,
+        X_Size = 0.0,
+        File_Size_GB = 0.0
     )
     db.add(new_record)
     db.commit()
@@ -2910,7 +2946,7 @@ def get_imaging_mip(sample_preparation_id: str,imaging_id:str):
         imaging_id_part = ""
     else:
         raise HTTPException(status_code=400, detail="Invalid imaging_id")
-
+    base_path = f"{base_path}/{sample_preparation_id}{imaging_id_part}"
     # 检查是否存在 -map 文件
     for ext in ["tif"]:
         file_path = os.path.join(base_path, f"{sample_preparation_id}{imaging_id_part}_MIP.{ext}")
@@ -2946,8 +2982,11 @@ async def upload_imaging_data(imaging_data_file: UploadFile = File,sample_prepar
     responses = []
     file_name = imaging_data_file.filename
     # 构建保存路径
-    base_upload_dir = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-    os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
+    if imaging_id == '--':
+        base_upload_dir = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+    else:
+        base_upload_dir = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+    os.makedirs(base_upload_dir, exist_ok=True)
 
     # 保存文件
     file_location = os.path.join(base_upload_dir, file_name)
@@ -3167,6 +3206,20 @@ async def check_sample_file_exists(filename: str):
     if os.path.exists(file_path):
         return {"exists": True}
     return {"exists": False}
+
+@app.get("/api/check_imaging_record_file_exists/{sample_preparation_id}/{imaging_id}")
+async def check_imaging_record_file_exists(filename: str,sample_preparation_id:str,imaging_id:str):
+    # 提取文件名中的基础部分（不包含扩展名）
+    if imaging_id == '--':
+        folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+    else:
+        folder = f"../mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+    # 生成完整文件路径
+    file_path = os.path.join(folder, filename)
+    if os.path.exists(file_path):
+        return {"exists": True}
+    return {"exists": False}
+
 ### LLMs 部分
 
 # 配置 Redis

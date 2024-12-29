@@ -190,6 +190,11 @@ class ImagingRecordSchema(BaseModel):
     sample_preparation_id: int
     producer: str
     status: str
+    Channels: Optional[int] = 1  # 默认值为 1
+    Z_Size: Optional[float] = None
+    Y_Size: Optional[float] = None
+    X_Size: Optional[float] = None
+    File_Size_GB: Optional[float] = None
     class Config:
         orm_mode = True
 
