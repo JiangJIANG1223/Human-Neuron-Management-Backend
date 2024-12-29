@@ -2683,6 +2683,37 @@ def get_sample(id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/sample_preparation", response_model=SamplePreparationSchema)
 def create_sample(sample: SamplePreparationSchema, db: Session = Depends(get_db)):
+    # 检查是否已存在完全相同的记录
+    existing_sample = db.query(SamplePreparation).filter(
+        SamplePreparation.sampleId == sample.sampleId,
+        SamplePreparation.tissueId == sample.tissueId,
+        SamplePreparation.rollId == sample.rollId,
+        SamplePreparation.sliceId == sample.sliceId,
+        SamplePreparation.blockId == sample.blockId
+    ).first()
+
+    if existing_sample:
+        raise HTTPException(
+            status_code=400,
+            detail="A record with the same PTRSB already exists."
+        )
+
+    # 检查是否存在相同 SampleId、TissueId、RollId、SliceId 且 BlockId 为 '--' 的记录
+    conflict_sample = db.query(SamplePreparation).filter(
+        SamplePreparation.sampleId == sample.sampleId,
+        SamplePreparation.tissueId == sample.tissueId,
+        SamplePreparation.rollId == sample.rollId,
+        SamplePreparation.sliceId == sample.sliceId,
+        SamplePreparation.blockId == '--'
+    ).first()
+
+    if conflict_sample:
+        raise HTTPException(
+            status_code=400,
+            detail="A record with the same PTRS but BlockID='--' already exists. Please check your data."
+        )
+
+    # 插入新记录
     db_sample = SamplePreparation(
         sampleId=sample.sampleId,
         tissueId=sample.tissueId,
