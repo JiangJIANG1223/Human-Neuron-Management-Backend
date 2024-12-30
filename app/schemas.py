@@ -43,6 +43,7 @@ class Report(BaseModel):
 # 定义一个基础模型 HumanSingleCellTrackingTableBase，用于存储公共字段
 class HumanSingleCellTrackingTableBase(BaseModel):
     # id: int
+    PTRSB: Optional[str] = None
     injection_id: Optional[str] = None
     cell_id: str
     # tissue_id: Optional[str] = None

@@ -35,3 +35,6 @@ app/database.py
 .DS_Store
 app/database.py
 app/database.py
+app/database.py
+app/__pycache__/__init__.cpython-311.pyc
+app/__pycache__/foundPBD.cpython-311.pyc

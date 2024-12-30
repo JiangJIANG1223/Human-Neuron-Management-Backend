@@ -29,6 +29,7 @@ class UserLog(Base):
 class HumanSingleCellTrackingTable(Base):
     __tablename__ = "human_singlecell_trackingtable_20240712"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    PTRSB = Column("PTRS(B)", String(50))
     injection_id = Column("Injection ID", String(50))
     cell_id = Column("Cell ID", String(255))
     # tissue_id = Column("Tissue ID", String(255))  # 删除

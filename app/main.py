@@ -1226,13 +1226,6 @@ def protected(Authorize: AuthJWT = Depends()):
     return {"msg": "You are logged in"}
 
 
-# @app.get("/download/{file_path:path}")
-# def download_file(file_path: str):
-#     if os.path.exists(file_path):
-#         return FileResponse(path=file_path, filename=os.path.basename(file_path), media_type='application/octet-stream')
-#     else:
-#         raise HTTPException(status_code=404, detail="File not found")
-
 # 下载V3DPBD
 @app.get("/api/download")
 def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
@@ -2372,8 +2365,7 @@ async def upload_imaging_info(
                 )
 
             # Step 2: Validate 'name' column format
-            invalid_names = marker_df[
-                ~marker_df['name'].str.match(r'^P\d{5}_T\d{3}_R\d{3}_S\d{3}_B\d?_C\d{5}$', na=False)]
+            invalid_names = marker_df[~marker_df['name'].str.match(r'^P\d{5}_T\d{3}_R\d{3}_S\d{3}_B\d?_C\d{5}$', na=False)]
             if not invalid_names.empty:
                 raise HTTPException(
                     status_code=400,
