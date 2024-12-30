@@ -52,8 +52,8 @@ app.add_middleware(
 )
 
 # 挂载 static 目录，服务静态文件
-# app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/static", StaticFiles(directory="/mnt/nfs/hndb/SamplePreparation"), name="static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+# app.mount("/static", StaticFiles(directory="/mnt/nfs/hndb/SamplePreparation"), name="static")
 
 
 # Dependency to get the DB session
@@ -2913,6 +2913,18 @@ def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get
         raise HTTPException(status_code=400,
                             detail="Duplicate ImagingRecord for this sample_preparation_id and imaging_id")
 
+    # conflict_record = (
+    #     db.query(ImagingRecord)
+    #     .filter(
+    #         ImagingRecord.sample_preparation_id == record.sample_preparation_id,
+    #         ImagingRecord.imaging_id == '--',
+    #     )
+    #     .first()
+    # )
+    # if conflict_record:
+    #     raise HTTPException(status_code=400,
+    #                         detail="Invalid ImagingRecord for this sample_preparation_id and imaging_id")
+
     conflict_record = (
         db.query(ImagingRecord)
         .filter(
@@ -2921,9 +2933,24 @@ def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get
         )
         .first()
     )
-    if conflict_record:
-        raise HTTPException(status_code=400,
-                            detail="Invalid ImagingRecord for this sample_preparation_id and imaging_id")
+
+    # 检查是否存在 imaging_id 为数字标号的记录
+    numeric_record_exists = (
+        db.query(ImagingRecord)
+        .filter(
+            ImagingRecord.sample_preparation_id == record.sample_preparation_id,
+            ImagingRecord.imaging_id != '--',
+        )
+        .first()
+    )
+
+    # 如果存在冲突记录或者存在数字标号记录且上传的是 '--'
+    if conflict_record or (numeric_record_exists and record.imaging_id == '--'):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid ImagingRecord: imaging_id cannot be '--' when numeric imaging_id records exist."
+        )
+
 
     # 创建记录
     new_record = ImagingRecord(
