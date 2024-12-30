@@ -19,6 +19,8 @@ def get_single_cell_data(db: Session, skip: int = 0, limit: int = 10, query_para
             query = query.filter(models.HumanSingleCellTrackingTable.patient_number.in_(query_params['patient_number']))    
         if query_params.get('tissue_block_number'):
             query = query.filter(models.HumanSingleCellTrackingTable.tissue_block_number.in_(query_params['tissue_block_number']))
+        if query_params.get('small_number'):
+            query = query.filter(models.HumanSingleCellTrackingTable.small_number.in_(query_params['small_number']))
         if query_params.get('slice_number'):
             query = query.filter(models.HumanSingleCellTrackingTable.slice_number.in_(query_params['slice_number']))
         if query_params.get('slicing_method'):
@@ -46,6 +48,8 @@ def get_total_count(db: Session, query_params=None):
             query = query.filter(models.HumanSingleCellTrackingTable.patient_number.in_(query_params['patient_number']))
         if query_params.get('tissue_block_number'):
             query = query.filter(models.HumanSingleCellTrackingTable.tissue_block_number.in_(query_params['tissue_block_number']))
+        if query_params.get('small_number'):
+            query = query.filter(models.HumanSingleCellTrackingTable.small_number.in_(query_params['small_number']))
         if query_params.get('slice_number'):
             query = query.filter(models.HumanSingleCellTrackingTable.slice_number.in_(query_params['slice_number']))
         if query_params.get('slicing_method'):

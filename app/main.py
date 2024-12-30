@@ -1251,9 +1251,8 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
     if not cell_data:
         raise HTTPException(status_code=404, detail="Cell data not found")
 
-    if cell_data.image_cell_id == '-' or \
-            (cell_data.image_cell_id != '-' and (
-                    cell_data.soma_x == '-' or cell_data.soma_y == '-' or cell_data.soma_z == '-')):
+    if (cell_data.soma_x == '-' or cell_data.soma_y == '-' or cell_data.soma_z == '-') or \
+            (cell_data.soma_x == '--' or cell_data.soma_y == '--' or cell_data.soma_z == '--'):
         # 直接下载 .v3dpbd 文件
         if os.path.exists(file_path):
             return FileResponse(path=file_path, filename=file_name, media_type='application/octet-stream')
@@ -1287,7 +1286,6 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
 
         # 返回打包文件
         return FileResponse(path=zip_file_path, filename=os.path.basename(zip_file_path), media_type='application/zip')
-
 
 # 获取MIP
 @app.get("/api/image/{file_path:path}")
@@ -1323,6 +1321,7 @@ def read_single_cell_data(
         patient_number: Optional[str] = Query(None),
         tissue_block_number: Optional[str] = Query(None),
         slice_number: Optional[str] = Query(None),
+        small_number: Optional[str] = Query(None),
         slicing_method: Optional[str] = Query(None),
         fresh_perfusion: Optional[str] = Query(None),
         brain_region: Optional[str] = Query(None),
@@ -1335,6 +1334,7 @@ def read_single_cell_data(
         'cell_id_end': cell_id_end,
         'patient_number': patient_number.split(',') if patient_number else [],
         'tissue_block_number': tissue_block_number.split(',') if tissue_block_number else [],
+        'small_number': small_number.split(',') if small_number else [],
         'slice_number': slice_number.split(',') if slice_number else [],
         'slicing_method': slicing_method,
         'fresh_perfusion': fresh_perfusion,
@@ -1356,6 +1356,8 @@ def get_options(db: Session = Depends(get_db)):
         asc(models.HumanSingleCellTrackingTable.patient_number)).all()
     tissue_id_options = db.query(models.HumanSingleCellTrackingTable.tissue_block_number).distinct().order_by(
         asc(models.HumanSingleCellTrackingTable.tissue_block_number)).all()
+    small_id_options = db.query(models.HumanSingleCellTrackingTable.small_number).distinct().order_by(
+        asc(models.HumanSingleCellTrackingTable.small_number)).all()
     slice_id_options = db.query(models.HumanSingleCellTrackingTable.slice_number).distinct().order_by(
         asc(models.HumanSingleCellTrackingTable.slice_number)).all()
     brain_region_options = db.query(models.HumanSingleCellTrackingTable.brain_region).distinct().order_by(
@@ -1364,6 +1366,7 @@ def get_options(db: Session = Depends(get_db)):
     return {
         "sample_id_options": [{"value": option[0], "label": option[0]} for option in sample_id_options],
         "tissue_id_options": [{"value": option[0], "label": option[0]} for option in tissue_id_options],
+        "small_id_options": [{"value": option[0], "label": option[0]} for option in small_id_options],
         "slice_id_options": [{"value": option[0], "label": option[0]} for option in slice_id_options],
         "brain_region_options": [{"value": option[0], "label": option[0]} for option in brain_region_options]
     }
