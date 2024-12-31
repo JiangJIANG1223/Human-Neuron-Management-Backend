@@ -1615,8 +1615,12 @@ def get_brain_region_distribution(db: Session = Depends(get_db)):
     brain_region_data = db.query(
         models.HumanSingleCellTrackingTable.brain_region,
         func.count(models.HumanSingleCellTrackingTable.id).label('count')
+    ).filter(
+        models.HumanSingleCellTrackingTable.brain_region != '-',  # 排除 '-'
+        models.HumanSingleCellTrackingTable.brain_region != '--',  # 排除 '--'
+        models.HumanSingleCellTrackingTable.brain_region != '',  # 排除空白
     ).group_by(models.HumanSingleCellTrackingTable.brain_region).order_by(
-        func.count(models.HumanSingleCellTrackingTable.id).desc()).limit(10).all()
+        func.count(models.HumanSingleCellTrackingTable.id).desc()).all()
     return {
         "categories": [item[0] for item in brain_region_data],
         "data": [item[1] for item in brain_region_data]
@@ -1641,9 +1645,34 @@ def get_immunohistochemistry_distribution(db: Session = Depends(get_db)):
 
     return result
 
-
 @app.get("/api/sample-source-distribution")
 def get_sample_source_distribution(db: Session = Depends(get_db)):
+    # Query to get unique sample_id and patient_number where patient_number is valid
+    data = db.query(models.Sample_Information.sample_id, models.Sample_Information.patient_number) \
+        .filter(models.Sample_Information.patient_number != '--',
+                models.Sample_Information.patient_number != '-',
+                models.Sample_Information.patient_number != ''
+                ).distinct().all()
+
+    source_count = {}
+    unique_patient_numbers = set()  # Set to track unique patient numbers
+
+    for item in data:
+        sample_id, patient_number = item
+        if patient_number not in unique_patient_numbers:
+            unique_patient_numbers.add(patient_number)
+            source = '-'.join(sample_id.split('-')[:2])  # Extract content before the second dash
+            if source not in source_count:
+                source_count[source] = 0
+            source_count[source] += 1
+
+    return {
+        "categories": list(source_count.keys()),  # List of unique sources
+        "data": list(source_count.values())       # List of corresponding counts
+    }
+
+@app.get("/api/sample-source-details")
+def get_sample_source_details(db: Session = Depends(get_db)):
     # Query to get unique sample_id and patient_number where patient_number is not '--'
     data = db.query(models.Sample_Information.sample_id, models.Sample_Information.patient_number) \
         .filter(models.Sample_Information.patient_number != '--',
@@ -1698,6 +1727,29 @@ def get_sample_source_distribution(db: Session = Depends(get_db)):
         "source_cell_count": source_cell_count,  # Count of tracking table entries per source
         "source_brain_region_distribution": source_brain_region_distribution  # Brain region distribution per source
     }
+
+@app.get("/api/recons-distribution")
+def get_recons_distribution(db: Session = Depends(get_db)):
+    """
+    统计 HumanSingleCellTrackingTable 中 swc_auto14 是否有值：
+      - 已重建(有值)
+      - 未重建(无值)
+    返回形如: [ { name: '已重建', value: xxx }, { name: '未重建', value: yyy } ]
+    """
+    # 计算已重建
+    reconstructed_count = db.query(models.HumanSingleCellTrackingTable) \
+        .filter(models.HumanSingleCellTrackingTable.swc_auto14.isnot(None)) \
+        .count()
+
+    # 计算未重建
+    not_reconstructed_count = db.query(models.HumanSingleCellTrackingTable) \
+        .filter(models.HumanSingleCellTrackingTable.swc_auto14.is_(None)) \
+        .count()
+
+    return [
+        {"name": "已重建", "value": reconstructed_count},
+        {"name": "未重建", "value": not_reconstructed_count}
+    ]
 
 
 @app.post("/api/savereport/")
