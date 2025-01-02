@@ -1656,35 +1656,7 @@ def get_sample_source_distribution(db: Session = Depends(get_db)):
                 ).distinct().all()
 
     source_count = {}
-    unique_patient_numbers = set()  # Set to track unique patient numbers
-
-    for item in data:
-        sample_id, patient_number = item
-        if patient_number not in unique_patient_numbers:
-            unique_patient_numbers.add(patient_number)
-            source = '-'.join(sample_id.split('-')[:2])  # Extract content before the second dash
-            if source not in source_count:
-                source_count[source] = 0
-            source_count[source] += 1
-
-    return {
-        "categories": list(source_count.keys()),  # List of unique sources
-        "data": list(source_count.values())       # List of corresponding counts
-    }
-
-@app.get("/api/sample-source-details")
-def get_sample_source_details(db: Session = Depends(get_db)):
-    # Query to get unique sample_id and patient_number where patient_number is not '--'
-    data = db.query(models.Sample_Information.sample_id, models.Sample_Information.patient_number) \
-        .filter(models.Sample_Information.patient_number != '--',
-                models.Sample_Information.patient_number != '-',
-                models.Sample_Information.patient_number != ''
-                ).distinct().all()
-
-    source_count = {}
     source_patient_numbers = {}  # Dictionary to track patient_numbers for each source
-    source_cell_count = {}  # Dictionary to track HumanSingleCellTrackingTable counts for each source
-    source_brain_region_distribution = {}  # Dictionary to track brain region distribution for each source
     unique_patient_numbers = set()  # Set to track unique patient numbers
 
     for item in data:
@@ -1695,27 +1667,77 @@ def get_sample_source_details(db: Session = Depends(get_db)):
             if source not in source_count:
                 source_count[source] = 0
                 source_patient_numbers[source] = []  # Initialize a list for each new source
-                source_cell_count[source] = 0  # Initialize the count for tracking table data
-                source_brain_region_distribution[source] = {}  # Initialize the brain region distribution
             source_count[source] += 1
             source_patient_numbers[source].append(patient_number)  # Add the patient_number to the corresponding source
 
-    # Query HumanSingleCellTrackingTable and count the entries for each patient_number
-    patient_cell_count = {}
-    for source, patient_numbers in source_patient_numbers.items():
-        for patient_number in patient_numbers:
-            # Query to get brain region distribution
-            tracking_data = db.query(models.HumanSingleCellTrackingTable.brain_region) \
-                .filter(models.HumanSingleCellTrackingTable.patient_number == patient_number) \
-                .all()
+    return {
+        "categories": list(source_count.keys()),  # List of unique sources
+        "data": list(source_count.values()),       # List of corresponding counts
+        "source_patient_numbers": source_patient_numbers
+    }
 
-            tracking_count = len(tracking_data)
-            patient_cell_count[patient_number] = tracking_count
-            source_cell_count[source] += tracking_count  # Add to the corresponding source's total tracking count
+@app.get("/api/sample-source-details")
+def get_sample_source_details(db: Session = Depends(get_db)):
+    """
+    只进行2次主要查询:
+    1) 获取 (sample_id, patient_number) 过滤掉无效值
+    2) 获取 (patient_number, brain_region) 全表或带过滤
+    """
 
-            # Update brain region distribution
-            for brain_region in tracking_data:
-                region = brain_region[0]  # Extract the brain_region from the query result
+    # 1) 获取有效的 sample_id, patient_number
+    sample_data = (
+        db.query(models.Sample_Information.sample_id, models.Sample_Information.patient_number)
+        .filter(
+            models.Sample_Information.patient_number.notin_(['--', '-', ''])
+        )
+        .distinct()
+        .all()
+    )
+
+    # 映射 patient_number -> source
+    # 另外统计 source_count, source_patient_numbers
+    source_count = {}
+    source_patient_numbers = {}
+    unique_patient_numbers = set()
+
+    for sample_id, patient_number in sample_data:
+        if patient_number not in unique_patient_numbers:
+            unique_patient_numbers.add(patient_number)
+            source = "-".join(sample_id.split("-")[:2])
+            if source not in source_count:
+                source_count[source] = 0
+                source_patient_numbers[source] = []
+            source_count[source] += 1
+            source_patient_numbers[source].append(patient_number)
+
+    # 2) 获取 HumanSingleCellTrackingTable 的 (patient_number, brain_region) 用于统计
+    tracking_data = (
+        db.query(models.HumanSingleCellTrackingTable.patient_number, models.HumanSingleCellTrackingTable.brain_region)
+        # 如果要只统计 patient_number 在 unique_patient_numbers 内的:
+        # .filter(models.HumanSingleCellTrackingTable.patient_number.in_(unique_patient_numbers))
+        .all()
+    )
+
+    # 将 tracking_data 组织成 dict: patient_number -> [brain_region, brain_region, ...]
+    from collections import defaultdict
+    patient_brain_regions = defaultdict(list)
+    for (pt_num, br) in tracking_data:
+        patient_brain_regions[pt_num].append(br)
+
+    # 3) 根据 patient_brain_regions 计算 source_cell_count, source_brain_region_distribution
+    source_cell_count = {}
+    source_brain_region_distribution = {}
+    for source in source_count.keys():
+        source_cell_count[source] = 0
+        source_brain_region_distribution[source] = {}
+
+    # 遍历每个 source 下的所有 patient_number, 聚合
+    for source, pt_list in source_patient_numbers.items():
+        for pt_num in pt_list:
+            # patient_brain_regions[pt_num] 可能为空或不存在
+            br_list = patient_brain_regions.get(pt_num, [])
+            source_cell_count[source] += len(br_list)
+            for region in br_list:
                 if region not in source_brain_region_distribution[source]:
                     source_brain_region_distribution[source][region] = 0
                 source_brain_region_distribution[source][region] += 1
@@ -1723,11 +1745,67 @@ def get_sample_source_details(db: Session = Depends(get_db)):
     return {
         "categories": list(source_count.keys()),
         "data": list(source_count.values()),
-        "source_patient_numbers": source_patient_numbers,  # Include the patient number mapping
-        "patient_cell_count": patient_cell_count,  # Count of tracking table entries per patient number
-        "source_cell_count": source_cell_count,  # Count of tracking table entries per source
-        "source_brain_region_distribution": source_brain_region_distribution  # Brain region distribution per source
+        "source_cell_count": source_cell_count,
+        "source_brain_region_distribution": source_brain_region_distribution,
     }
+
+
+# @app.get("/api/sample-source-details")
+# def get_sample_source_details(db: Session = Depends(get_db)):
+#     # Query to get unique sample_id and patient_number where patient_number is not '--'
+#     data = db.query(models.Sample_Information.sample_id, models.Sample_Information.patient_number) \
+#         .filter(models.Sample_Information.patient_number != '--',
+#                 models.Sample_Information.patient_number != '-',
+#                 models.Sample_Information.patient_number != ''
+#                 ).distinct().all()
+
+#     source_count = {}
+#     source_patient_numbers = {}  # Dictionary to track patient_numbers for each source
+#     source_cell_count = {}  # Dictionary to track HumanSingleCellTrackingTable counts for each source
+#     source_brain_region_distribution = {}  # Dictionary to track brain region distribution for each source
+#     unique_patient_numbers = set()  # Set to track unique patient numbers
+
+#     for item in data:
+#         sample_id, patient_number = item
+#         if patient_number not in unique_patient_numbers:
+#             unique_patient_numbers.add(patient_number)
+#             source = '-'.join(sample_id.split('-')[:2])  # Extract content before the second dash
+#             if source not in source_count:
+#                 source_count[source] = 0
+#                 source_patient_numbers[source] = []  # Initialize a list for each new source
+#                 source_cell_count[source] = 0  # Initialize the count for tracking table data
+#                 source_brain_region_distribution[source] = {}  # Initialize the brain region distribution
+#             source_count[source] += 1
+#             source_patient_numbers[source].append(patient_number)  # Add the patient_number to the corresponding source
+
+#     # Query HumanSingleCellTrackingTable and count the entries for each patient_number
+#     patient_cell_count = {}
+#     for source, patient_numbers in source_patient_numbers.items():
+#         for patient_number in patient_numbers:
+#             # Query to get brain region distribution
+#             tracking_data = db.query(models.HumanSingleCellTrackingTable.brain_region) \
+#                 .filter(models.HumanSingleCellTrackingTable.patient_number == patient_number) \
+#                 .all()
+
+#             tracking_count = len(tracking_data)
+#             patient_cell_count[patient_number] = tracking_count
+#             source_cell_count[source] += tracking_count  # Add to the corresponding source's total tracking count
+
+#             # Update brain region distribution
+#             for brain_region in tracking_data:
+#                 region = brain_region[0]  # Extract the brain_region from the query result
+#                 if region not in source_brain_region_distribution[source]:
+#                     source_brain_region_distribution[source][region] = 0
+#                 source_brain_region_distribution[source][region] += 1
+
+#     return {
+#         "categories": list(source_count.keys()),
+#         "data": list(source_count.values()),
+#         "source_patient_numbers": source_patient_numbers,  # Include the patient number mapping
+#         "patient_cell_count": patient_cell_count,  # Count of tracking table entries per patient number
+#         "source_cell_count": source_cell_count,  # Count of tracking table entries per source
+#         "source_brain_region_distribution": source_brain_region_distribution  # Brain region distribution per source
+#     }
 
 @app.get("/api/recons-distribution")
 def get_recons_distribution(db: Session = Depends(get_db)):
