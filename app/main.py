@@ -88,64 +88,65 @@ def get_config():
 @app.post("/api/generate_sample_xlsx")
 async def generate_xlsx(request: Request, db: Session = Depends(get_db)):
     request_data = await request.json()
-    hospital_name = request_data.get('hospital')
-    print(type(hospital_name), hospital_name, 1 if not hospital_name else 0)
+    hospital_name = request_data.get("hospital")
 
-    # 从数据库中查找样本
+    # 如果 hospital_name 是逗号分隔字符串，转为列表
+    if hospital_name and isinstance(hospital_name, str):
+        hospital_name = hospital_name.split(",")
+
+    # 从数据库中获取所有样本
     hossamples = db.query(models.Sample_Information).all()
-    if (not hospital_name) or (hospital_name is None) or (hospital_name == '') or (hospital_name == 'none'):
-        samples = [sample for sample in hossamples]
+
+    # 根据 hospital_name 筛选
+    if not hospital_name or hospital_name == "none":
+        samples = hossamples
     else:
-        # 筛选出符合条件的样本
         samples = [
-            sample for sample in hossamples
-            if '-'.join(sample.sample_id.split('-')[:2]) == hospital_name
+            sample
+            for sample in hossamples
+            if "-".join(sample.sample_id.split("-")[:2]) in hospital_name
         ]
 
     # 准备 XLSX 数据
     xlsx_data = {
-        "hospital": [],  # 添加医院列
+        "hospital": [],
         "sample_id": [],
         "loss": [],
         "sample_snapshot": [],
         "sample_image": [],
-        "sample_annotation": []
+        "sample_annotation": [],
     }
 
     for sample in samples:
         sample_id = sample.sample_id
-        sample_snapshot = sample.sample_snapshot
-        sample_image = sample.sample_image
-        sample_annotation = sample.sample_annotation
+        hospital_value = "-".join(sample_id.split("-")[:2])
 
-        # 填充医院列
-        hospital_value = '-'.join(sample_id.split('-')[:2])
         xlsx_data["hospital"].append(hospital_value)
-
-        # 填充 sample_id
         xlsx_data["sample_id"].append(sample_id)
+        xlsx_data["sample_snapshot"].append(0 if not sample.sample_snapshot else 1)
+        xlsx_data["sample_image"].append(0 if not sample.sample_image else 1)
+        xlsx_data["sample_annotation"].append(0 if not sample.sample_annotation else 1)
+        xlsx_data["loss"].append(
+            1
+            if all(
+                [
+                    sample.sample_snapshot,
+                    sample.sample_image,
+                    sample.sample_annotation,
+                ]
+            )
+            else 0
+        )
 
-        # 处理 snapshot, image, annotation，检查是否为 None 或空
-        xlsx_data["sample_snapshot"].append(0 if (sample_snapshot is None or sample_snapshot == '') else 1)
-        xlsx_data["sample_image"].append(0 if (sample_image is None or sample_image == '') else 1)
-        xlsx_data["sample_annotation"].append(0 if (sample_annotation is None or sample_annotation == '') else 1)
-
-        # 计算 loss
-        loss = 0 if ((sample_snapshot is None or sample_snapshot == '') or
-                     (sample_image is None or sample_image == '') or (
-                                 sample_annotation is None or sample_annotation == '')) else 1
-        xlsx_data["loss"].append(loss)
-
-    # 创建 DataFrame
     df = pd.DataFrame(xlsx_data)
-
-    # 使用 with open 写入 XLSX
-    xlsx_file_path = 'sample_data.xlsx'
+    xlsx_file_path = "sample_data.xlsx"
     df.to_excel(xlsx_file_path, index=False)
 
-    return StreamingResponse(open(xlsx_file_path, mode='rb'),
-                             media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                             headers={'Content-Disposition': 'attachment; filename=sample_data.xlsx'})
+    return StreamingResponse(
+        open(xlsx_file_path, mode="rb"),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=sample_data.xlsx"},
+    )
 
 
 '''**********************************样本信息上传*********************************************
@@ -1772,36 +1773,64 @@ def get_latest_report(db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/get-samplePID")
+@app.get("/api/get-patientID")
 def get_PIDoptions(db: Session = Depends(get_db)):
-    sample_id_options = db.query(models.Sample_Information.patient_number).distinct().order_by(
-        asc(models.Sample_Information.patient_number)).all()
+    sample_id_options = db.query(models.Sample_Information.patient_number).filter(
+        models.Sample_Information.patient_number != '',
+        models.Sample_Information.patient_number != '-',
+        models.Sample_Information.patient_number != '--'
+    ).distinct().order_by(asc(models.Sample_Information.patient_number)).all()
     return {
         "pid_options": [{"value": option[0], "label": option[0]} for option in sample_id_options]
     }
 
-
 @app.get("/api/sample_information/", response_model=dict)
-def read_sample_information(skip: int = 0, limit: int = 20, sample_hospital: str = None, PID: str = None,
-                            db: Session = Depends(get_db)):
-    print('Sample hospital:', sample_hospital)
-    print('PID:', PID)  # 打印PID以调试
+def read_sample_information(
+    skip: int = 0,
+    limit: int = 20,
+    sample_source: List[str] = Query(None),  # 接收多个sample_source
+    PID: List[str] = Query(None),            # 接收多个PID
+    db: Session = Depends(get_db)
+):
+    """
+    sample_source 会是一个字符串列表，
+    比如 ["BJ-TT", "NanJ-JZ"]。
+    PID 同理。
+    """
+    print('Sample Source:', sample_source)
+    print('PID:', PID)
 
-    # 初始化查询
     query = db.query(models.Sample_Information)
 
-    # 根据 sample_hospital 过滤
-    if sample_hospital and sample_hospital != 'none':
-        query = query.filter(models.Sample_Information.sample_id.like(f"{sample_hospital}-%"))
+    # 根据 sample_source 过滤: 例如 OR 逻辑
+    if sample_source:
+        # 如果后端业务逻辑是：来源在这些值里之一即可
+        # 常见写法： (sample_id LIKE 'BJ-TT-%') OR (sample_id LIKE 'NanJ-JZ-%')
+        from sqlalchemy import or_
+        or_clauses = []
+        for src in sample_source:
+            if src != 'none':  # 或者先判断是否要排除 'none'
+                or_clauses.append(
+                    models.Sample_Information.sample_id.like(f"{src}-%")
+                )
+        if or_clauses:
+            query = query.filter(or_(*or_clauses))
 
-    # 根据 PID 过滤
-    if PID and PID != 'none':
-        query = query.filter(models.Sample_Information.patient_number == PID)
+    # 根据 PID 过滤: 例如 OR 逻辑
+    if PID:
+        from sqlalchemy import or_
+        or_clauses_pid = []
+        for pid_val in PID:
+            if pid_val != 'none':
+                or_clauses_pid.append(
+                    models.Sample_Information.patient_number == pid_val
+                )
+        if or_clauses_pid:
+            query = query.filter(or_(*or_clauses_pid))
 
     # 排序
     query = query.order_by(cast(models.Sample_Information.total_id, Integer))
 
-    # 应用分页
     total = query.count()
     data = query.offset(skip).limit(limit).all()
 
