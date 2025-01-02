@@ -173,7 +173,7 @@ class SamplePreparation(Base):
     blockId = Column(String(50))
     channels = Column(Integer)
     needles = Column(Integer)
-    status = Column(Enum("initial", "injected", "imaged", "marked", "matched", name="status_enum"), default="initial")
+    status = Column(Enum("injected", "imaged", "marked", "matched","inserted", name="status_enum"), default="injected")
     operator = Column(String(50))
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
 
@@ -187,7 +187,7 @@ class ImagingRecord(Base):
     imaging_id = Column(String(100))
     sample_preparation_id = Column(Integer, ForeignKey("sample_preparation.id", ondelete="CASCADE"))
     producer = Column(String(100))
-    status = Column(Enum("imaged", "marked", "matched", 'inserted',name="status_enum"), default="initial")
+    status = Column(Enum("imaged", "marked", "matched", 'inserted',name="status_enum"), default="imaged")
     Channels = Column(Integer, default=1)  # 默认为 1
     Z_Size = Column(Float, nullable=True)  # 可为 NULL
     Y_Size = Column(Float, nullable=True)
