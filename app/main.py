@@ -1522,11 +1522,17 @@ def get_data_status(db: Session = Depends(get_db)):
         logging.error(f"Error getting data status: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
-
+from sqlalchemy import func, cast, Date
 @app.get("/api/productiontrend/", response_model=dict)
 def get_production_trend(start_date: str = None, end_date: str = None, db: Session = Depends(get_db)):
     try:
-        query = db.query(models.HumanSingleCellTrackingTable)
+        # 构造基础查询
+        query = db.query(
+            func.date(models.HumanSingleCellTrackingTable.shooting_date).label('shooting_day'),
+            func.count(models.HumanSingleCellTrackingTable.id).label('count_per_day')
+        )
+
+        # 根据日期范围过滤
         if start_date and end_date:
             start_date_obj = datetime.strptime(start_date, '%Y-%m-%d')
             end_date_obj = datetime.strptime(end_date, '%Y-%m-%d')
@@ -1535,30 +1541,28 @@ def get_production_trend(start_date: str = None, end_date: str = None, db: Sessi
                 models.HumanSingleCellTrackingTable.shooting_date <= end_date_obj
             )
 
-        result = query.all()
+        # 分组查询
+        query = query.group_by(func.date(models.HumanSingleCellTrackingTable.shooting_date))
+        # 排序按日期
+        query = query.order_by(func.date(models.HumanSingleCellTrackingTable.shooting_date).asc())
 
-        daily_counts = {}
-        total_counts = {}
-        for record in result:
-            date_str = record.shooting_date
-            date = datetime.strptime(date_str, '%Y-%m-%d').strftime('%Y-%m-%d')
-            if date in daily_counts:
-                daily_counts[date] += 1
-            else:
-                daily_counts[date] = 1
+        rows = query.all()
+        
+        # rows 形如: [(datetime.date(2023,1,1), 10), (datetime.date(2023,1,2), 12), ...]
+        # 将结果拆分
+        dates = [r[0].strftime('%Y-%m-%d') for r in rows]
+        daily_values = [r[1] for r in rows]
 
-            if date in total_counts:
-                total_counts[date] += daily_counts[date]
-            else:
-                total_counts[date] = daily_counts[date]
+        # 计算 totalValues：前缀和
+        total_values = []
+        running_sum = 0
+        for val in daily_values:
+            running_sum += val
+            total_values.append(running_sum)
 
-        dates = sorted(daily_counts.keys())
-        daily_values = [daily_counts[date] for date in dates]
-        total_values = [sum(daily_values[:i + 1]) for i in range(len(daily_values))]
-
+        # 通过聚合函数一次性获取min_date, max_date
         min_date_str = db.query(func.min(models.HumanSingleCellTrackingTable.shooting_date)).scalar()
         max_date_str = db.query(func.max(models.HumanSingleCellTrackingTable.shooting_date)).scalar()
-
         min_date = datetime.strptime(min_date_str, '%Y-%m-%d') if min_date_str else None
         max_date = datetime.strptime(max_date_str, '%Y-%m-%d') if max_date_str else None
 
