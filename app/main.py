@@ -370,7 +370,7 @@ async def get_sample_snapshot(request: Request):
                     if file.lower().startswith('._'):
                         continue  # 跳过该文件
 
-                    if file.lower().endswith(('.jpg', '.jpeg')):
+                    if file.lower().endswith(('.jpg', '.jpeg','.png')):
                         # 构建完整的图像 URL
                         image_url = os.path.join(root, file).replace("\\", '/')
                         print(image_url)
