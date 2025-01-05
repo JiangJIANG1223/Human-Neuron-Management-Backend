@@ -53,7 +53,6 @@ app.add_middleware(
 
 # 挂载 static 目录，服务静态文件
 app.mount("/static", StaticFiles(directory="static"), name="static")
-# app.mount("/static", StaticFiles(directory="/mnt/nfs/hndb/SamplePreparation"), name="static")
 
 
 # Dependency to get the DB session

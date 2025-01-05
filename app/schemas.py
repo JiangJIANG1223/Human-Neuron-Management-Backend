@@ -208,6 +208,7 @@ class SamplePreparationSchema(BaseModel):
     blockId: str
     channels: int
     needles: int
+    injected_num:int
     status: str
     operator: Optional[str] = None
     imaging_records: Optional[List[ImagingRecordSchema]] = []

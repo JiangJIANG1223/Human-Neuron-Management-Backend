@@ -171,9 +171,10 @@ class SamplePreparation(Base):
     rollId = Column(String(50))
     sliceId = Column(String(50))
     blockId = Column(String(50))
-    channels = Column(Integer)
-    needles = Column(Integer)
+    channels = Column(Integer,nullable=True)
+    needles = Column(Integer,nullable=True)
     status = Column(Enum("injected", "imaged", "marked", "matched","inserted", name="status_enum"), default="injected")
+    injected_num = Column(Integer, default=0)
     operator = Column(String(50))
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
 
