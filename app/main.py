@@ -1546,7 +1546,7 @@ def get_production_trend(start_date: str = None, end_date: str = None, db: Sessi
         query = query.order_by(func.date(models.HumanSingleCellTrackingTable.shooting_date).asc())
 
         rows = query.all()
-        
+
         # rows 形如: [(datetime.date(2023,1,1), 10), (datetime.date(2023,1,2), 12), ...]
         # 将结果拆分
         dates = [r[0].strftime('%Y-%m-%d') for r in rows]
@@ -2170,7 +2170,7 @@ async def upload_csv_to_db(file: UploadFile = File(...), db: Session = Depends(g
         if 'Id' not in df.columns:
             raise HTTPException(status_code=400, detail="CSV file must contain an ID column.")
 
-        # 检查 ID 列中的所有值是否符合文件名中的格式 
+        # 检查 ID 列中的所有值是否符合文件名中的格式
         if not df['Id'].apply(lambda x: bool(prefix_pattern.match(str(x)))).all():
             raise HTTPException(status_code=400, detail="File name does not match its ID column.")
 
@@ -3054,6 +3054,77 @@ def get_imaging_record(sample_preparation_id: int, imaging_id: str, db: Session 
         raise HTTPException(status_code=404, detail="ImagingRecord not found")
     return record
 
+def delete_file(file_path: str):
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as e:
+        print(f"Error deleting file: {file_path}. Details: {e}")
+
+@app.get("/api/download_imaging_records_files/{sample_preparation_id}/{imaging_id}")
+def download_imaging_records_files(sample_preparation_id: str, imaging_id: str, background_tasks: BackgroundTasks):
+    try:
+        BASE_DIR = "/mnt/nfs/hndb/SamplePreparation"
+        # 构建文件夹路径
+        sample_folder = os.path.join(BASE_DIR, sample_preparation_id)
+        if imaging_id == '--':
+            imaging_folder = os.path.join(sample_folder, f"{sample_preparation_id}")
+        else:
+            imaging_folder = os.path.join(sample_folder, f"{sample_preparation_id}-{imaging_id}")
+
+        # 校验文件夹是否存在
+        if not os.path.exists(sample_folder) or not os.path.exists(imaging_folder):
+            raise HTTPException(status_code=404, detail="Sample or imaging folder not found.")
+
+        # 定义需要的文件扩展名
+        required_extensions = [".xlsx", ".xml", "_MIP.tif", ".marker", ".apo"]
+        map_extensions = [".png", ".jpg", ".jpeg"]
+
+        # 收集需要打包的文件
+        files_to_zip = []
+
+        # 搜索 imaging_folder 中的文件
+        for file_name in os.listdir(imaging_folder):
+            for ext in required_extensions:
+                if file_name.endswith(ext):
+                    files_to_zip.append(os.path.join(imaging_folder, file_name))
+                    break  # 防止重复匹配相同文件
+
+        # 搜索 sample_folder 中的 _map 图片文件
+        for file_name in os.listdir(sample_folder):
+            if any(file_name.endswith(ext) for ext in map_extensions) and "_map" in file_name:
+                files_to_zip.append(os.path.join(sample_folder, file_name))
+
+        # 如果没有文件需要打包，返回错误
+        if not files_to_zip:
+            raise HTTPException(status_code=404, detail="No matching files found to zip.")
+
+        # 创建临时压缩包路径
+        if imaging_id == "--":
+            zip_filename = f"{sample_preparation_id}_files.zip"
+        else:
+            zip_filename = f"{sample_preparation_id}_{imaging_id}_files.zip"
+
+        zip_path = os.path.join(sample_folder, zip_filename)
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for file_path in files_to_zip:
+                # 添加文件到压缩包，保持目录结构平坦（只保留文件名）
+                zipf.write(file_path, arcname=os.path.basename(file_path))
+
+        # 使用 BackgroundTask 延迟删除文件
+        # background_tasks.add_task(delete_file, zip_path)
+
+        # 返回压缩包文件
+        return FileResponse(
+            zip_path,
+            media_type="application/zip",
+            filename=zip_filename,
+        )
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/api/imaging_records", response_model=ImagingRecordSchema)
 def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get_db)):
