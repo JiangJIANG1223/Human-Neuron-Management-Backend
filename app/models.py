@@ -176,6 +176,7 @@ class SamplePreparation(Base):
     status = Column(Enum("injected", "imaged", "marked", "matched","inserted", name="status_enum"), default="injected")
     injected_num = Column(Integer, default=0)
     operator = Column(String(50))
+    comment = Column(String(300), nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.current_timestamp(), nullable=False)
 
     # 关系定义，关联 imaging_records 表

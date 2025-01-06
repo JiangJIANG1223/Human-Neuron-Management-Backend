@@ -211,6 +211,7 @@ class SamplePreparationSchema(BaseModel):
     injected_num:int
     status: str
     operator: Optional[str] = None
+    comment: Optional[str] = None
     imaging_records: Optional[List[ImagingRecordSchema]] = []
     created_at: Optional[datetime]
     class Config:

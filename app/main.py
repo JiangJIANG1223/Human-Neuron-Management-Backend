@@ -2587,8 +2587,11 @@ async def upload_imaging_annotation_file(
         annotation_file: UploadFile = File,
         sample_preparation_id: str = '',
         imaging_id: str = '',
+        Authorize: AuthJWT = Depends(),
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     uploaded_files = []
 
     # Function to validate sample numbers against the database
@@ -2649,7 +2652,10 @@ async def upload_imaging_annotation_file(
         raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
-
+    details = json.dumps(file_path)
+    crud.create_user_log(db, int(user_id),
+                         f"Upload imaging_annotation_file of: {sample_preparation_id}",
+                         details=details)
     return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
 
 
@@ -2658,8 +2664,11 @@ async def upload_imaging_metadata(
         metadata_file: UploadFile = File,
         sample_preparation_id: str = '',
         imaging_id: str = '',
+        Authorize: AuthJWT = Depends(),
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     uploaded_files = []
 
     # Function to validate sample numbers against the database
@@ -2721,16 +2730,21 @@ async def upload_imaging_metadata(
         raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
-
+    details = json.dumps(file_path)
+    crud.create_user_log(db, int(user_id),
+                         f"Upload imaging_metadata of: {sample_preparation_id}",
+                         details=details)
     return JSONResponse(status_code=200,
                         content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
 
 
 @app.post("/api/upload_imaging_marker")
 async def upload_imaging_marker(
-        marker_file: UploadFile = File,
+        marker_file: UploadFile = File,Authorize: AuthJWT = Depends(),
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     uploaded_files = []
 
     # Function to validate sample numbers against the database
@@ -2844,7 +2858,7 @@ async def upload_imaging_marker(
                 # detail=f"Invalid 'name' entries in marker file '{file.filename}': {', '.join(invalid_names['name'].unique())}"
                 detail="Invalid C number in the 'name' column. Please check."
             )
-
+        sample_preparation_id = file.filename.split('.')[0]
         # Check if file already exists
         file_path = os.path.join(MARKER_FILES_DIR, file.filename)
         if os.path.exists(file_path):
@@ -2860,7 +2874,10 @@ async def upload_imaging_marker(
         raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
-
+    details = json.dumps(file_path)
+    crud.create_user_log(db, int(user_id),
+                         f"Upload imaging_match_table of: {sample_preparation_id}",
+                         details=details)
     return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
 
 
@@ -2868,9 +2885,11 @@ async def upload_imaging_marker(
 async def upload_imaging_match_table(
         matchtable_file: UploadFile = File,
         sample_preparation_id: str = '',
-        imaging_id: str = '',
+        imaging_id: str = '',Authorize: AuthJWT = Depends(),
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     uploaded_files = []
 
     # Function to validate sample numbers against the database
@@ -2931,7 +2950,10 @@ async def upload_imaging_match_table(
         raise HTTPException(status_code=400, detail={"error": e.detail, "uploaded_files": uploaded_files})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
-
+    details = json.dumps(file_path)
+    crud.create_user_log(db, int(user_id),
+                         f"Upload imaging_match_table of: {sample_preparation_id}",
+                         details=details)
     return JSONResponse(content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
 
 
@@ -2949,7 +2971,9 @@ def get_sample(id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/sample_preparation", response_model=SamplePreparationSchema)
-def create_sample(sample: SamplePreparationSchema, db: Session = Depends(get_db)):
+def create_sample(sample: SamplePreparationSchema, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     # 检查是否已存在完全相同的记录
     existing_sample = db.query(SamplePreparation).filter(
         SamplePreparation.sampleId == sample.sampleId,
@@ -2995,32 +3019,46 @@ def create_sample(sample: SamplePreparationSchema, db: Session = Depends(get_db)
     db.add(db_sample)
     db.commit()
     db.refresh(db_sample)
+    details = json.dumps(SamplePreparationSchema.from_orm(db_sample).dict())
+    crud.create_user_log(db, int(user_id),
+                         f"create an new sample of: {id}",
+                         details=details)
     return db_sample
 
 
 @app.put("/api/sample_preparation/{id}", response_model=SamplePreparationSchema)
-def update_sample(id: int, sample: SamplePreparationSchema, db: Session = Depends(get_db)):
+def update_sample(id: int, sample: SamplePreparationSchema, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == id).first()
     if not db_sample:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    db_sample.sampleId = sample.sampleId
-    db_sample.tissueId = sample.tissueId
-    db_sample.rollId = sample.rollId
-    db_sample.sliceId = sample.sliceId
-    db_sample.blockId = sample.blockId
-    db_sample.channels = sample.channels
-    db_sample.needles = sample.needles
-    db_sample.status = sample.status
-    db_sample.operator = sample.operator
+    # db_sample.sampleId = sample.sampleId
+    # db_sample.tissueId = sample.tissueId
+    # db_sample.rollId = sample.rollId
+    # db_sample.sliceId = sample.sliceId
+    # db_sample.blockId = sample.blockId
+    # db_sample.channels = sample.channels
+    # db_sample.needles = sample.needles
+    # db_sample.status = sample.status
+    # db_sample.operator = sample.operator
+    db_sample.comment = sample.comment
+    # db_sample.injected_num = sample.injected_num
 
     db.commit()
     db.refresh(db_sample)
+    details = json.dumps(SamplePreparationSchema.from_orm(db_sample).dict())
+    crud.create_user_log(db, int(user_id),
+                         f"modify the sample preparation of: {id}",
+                         details=details)
     return db_sample
 
 
 @app.delete("/api/sample_preparation/{id}")
-def delete_sample(id: int, db: Session = Depends(get_db)):
+def delete_sample(id: int, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == id).first()
     if not db_sample:
         raise HTTPException(status_code=404, detail="Sample not found")
@@ -3028,6 +3066,10 @@ def delete_sample(id: int, db: Session = Depends(get_db)):
     # 删除SamplePreparation会自动删除关联的ImagingRecord（由于cascade和ondelete设置）
     db.delete(db_sample)
     db.commit()
+    details = json.dumps(SamplePreparationSchema.from_orm(db_sample).dict())
+    crud.create_user_log(db, int(user_id),
+                         f"delete the sample preparation of: {id}",
+                         details=details)
     return {"message": f"SamplePreparation {id} deleted successfully."}
 
 
@@ -3127,7 +3169,9 @@ def download_imaging_records_files(sample_preparation_id: str, imaging_id: str, 
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.post("/api/imaging_records", response_model=ImagingRecordSchema)
-def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get_db)):
+def create_imaging_record(record: ImagingRecordSchema, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     # 验证父表 ID 是否存在
     db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == record.sample_preparation_id).first()
     if not db_sample:
@@ -3145,18 +3189,6 @@ def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get
     if existing_record:
         raise HTTPException(status_code=400,
                             detail="Duplicate ImagingRecord for this sample_preparation_id and imaging_id")
-
-    # conflict_record = (
-    #     db.query(ImagingRecord)
-    #     .filter(
-    #         ImagingRecord.sample_preparation_id == record.sample_preparation_id,
-    #         ImagingRecord.imaging_id == '--',
-    #     )
-    #     .first()
-    # )
-    # if conflict_record:
-    #     raise HTTPException(status_code=400,
-    #                         detail="Invalid ImagingRecord for this sample_preparation_id and imaging_id")
 
     conflict_record = (
         db.query(ImagingRecord)
@@ -3200,6 +3232,9 @@ def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get
     db.add(new_record)
     db.commit()
     db.refresh(new_record)
+    details = json.dumps(ImagingRecordSchema.from_orm(new_record).dict())
+    crud.create_user_log(db, int(user_id), f"create an new imaging_record of: {record.sample_preparation_id}-{record.imaging_id}",
+                         details=details)
     return new_record
 
 
@@ -3207,9 +3242,11 @@ def create_imaging_record(record: ImagingRecordSchema, db: Session = Depends(get
 def update_imaging_record(
         sample_preparation_id: int,
         imaging_id: str,
-        record: ImagingRecordSchema,
+        record: ImagingRecordSchema,Authorize: AuthJWT = Depends(),
         db: Session = Depends(get_db),
 ):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     db_record = (
         db.query(ImagingRecord)
         .filter(
@@ -3227,11 +3264,17 @@ def update_imaging_record(
 
     db.commit()
     db.refresh(db_record)
+    details = json.dumps(ImagingRecordSchema.from_orm(db_record).dict())
+    crud.create_user_log(db, int(user_id), f"modify the imaging_records of: {sample_preparation_id}-{imaging_id}",
+                         details=details)
     return db_record
 
 
 @app.delete("/api/imaging_records/{sample_preparation_id}/{imaging_id}")
-def delete_imaging_record(sample_preparation_id: int, imaging_id: str, db: Session = Depends(get_db)):
+def delete_imaging_record(sample_preparation_id: int, imaging_id: str, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
+
     db_record = (
         db.query(ImagingRecord)
         .filter(
@@ -3245,12 +3288,16 @@ def delete_imaging_record(sample_preparation_id: int, imaging_id: str, db: Sessi
 
     db.delete(db_record)
     db.commit()
+    details = json.dumps(ImagingRecordSchema.from_orm(db_record).dict())
+    crud.create_user_log(db, int(user_id), f"Delete imaging_records with id: {sample_preparation_id}-{imaging_id}",details=details)
     return {
         "message": f"ImagingRecord with imaging_id '{imaging_id}' and sample_preparation_id '{sample_preparation_id}' deleted successfully."}
 
 
 @app.post("/api/upload_imaging_map")
-async def upload_imaging_map(imaging_map_file: UploadFile = File):
+async def upload_imaging_map(imaging_map_file: UploadFile = File,Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     responses = []
     file_name = imaging_map_file.filename
     if "-map" in file_name:
@@ -3267,7 +3314,9 @@ async def upload_imaging_map(imaging_map_file: UploadFile = File):
         file_object.write(await imaging_map_file.read())
 
     responses.append(file_location)
-
+    details = json.dumps(file_location)
+    crud.create_user_log(db, int(user_id), f"Upload imaging_map of: {folder_name}",
+                         details=details)
     return JSONResponse(content={"message": "Upload successful!", "files": responses})
 
 
@@ -3335,8 +3384,10 @@ def get_injection_file(sample_preparation_id: str):
 
 
 @app.post("/api/upload_imaging_data/{sample_preparation_id}/{imaging_id}")
-async def upload_imaging_data(imaging_data_file: UploadFile = File, sample_preparation_id: str = '',
-                              imaging_id: str = ''):
+async def upload_imaging_data(imaging_data_file: UploadFile = File, sample_preparation_id: str = '',Authorize: AuthJWT = Depends(),
+                              imaging_id: str = '',db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     responses = []
     file_name = imaging_data_file.filename
     # 构建保存路径
@@ -3352,6 +3403,9 @@ async def upload_imaging_data(imaging_data_file: UploadFile = File, sample_prepa
         file_object.write(await imaging_data_file.read())
 
     responses.append(file_location)
+    details = json.dumps(file_location)
+    crud.create_user_log(db, int(user_id), f"Upload imaging_data of: {sample_preparation_id}",
+                         details=details)
 
     return JSONResponse(content={"message": "Upload successful!", "files": responses})
 
@@ -3359,8 +3413,12 @@ async def upload_imaging_data(imaging_data_file: UploadFile = File, sample_prepa
 @app.post("/api/upload_bright_field_data/{sample_preparation_id}")
 async def upload_bright_field_data(
         sample_preparation_id: str,
-        bright_field_data_files: List[UploadFile] = File(...)
+        Authorize: AuthJWT = Depends(),
+        bright_field_data_files: List[UploadFile] = File(...),
+        db: Session = Depends(get_db)
 ):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     base_upload_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
     os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
 
@@ -3375,7 +3433,9 @@ async def upload_bright_field_data(
             file_object.write(await bf_file.read())
 
         saved_files.append(file_path)
-
+    details = json.dumps(saved_files)
+    crud.create_user_log(db, int(user_id), f"Upload bright_field_data of: {sample_preparation_id}",
+                         details=details)
     return JSONResponse(content={
         "message": "Upload successful!",
         "uploaded_files": saved_files
@@ -3383,7 +3443,9 @@ async def upload_bright_field_data(
 
 
 @app.post("/api/upload_injection_file")
-async def upload_injection_file(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_injection_file(file: UploadFile = File(...), Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     sample_preparation_id = os.path.splitext(file.filename)[0]
     upload_path = os.path.join("/mnt/nfs/hndb/SamplePreparation", sample_preparation_id)
     os.makedirs(upload_path, exist_ok=True)
@@ -3455,6 +3517,9 @@ async def upload_injection_file(file: UploadFile = File(...), db: Session = Depe
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
 
+    details = json.dumps(file_path)
+    crud.create_user_log(db, int(user_id), f"Upload injection_file of: {sample_preparation_id}",
+                         details=details)
     return {"message": "CSV uploaded and stored in the database successfully"}
 
 
@@ -3489,7 +3554,9 @@ async def get_injection_ids(sample_preparation_id: str):
 
 
 @app.post("/api/insert_injection_file_to_db/{sample_preparation_id}")
-async def insert_injection_file_to_db(sample_preparation_id: str, db: Session = Depends(get_db)):
+async def insert_injection_file_to_db(sample_preparation_id: str, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
     file_path = "/mnt/nfs/hndb/SamplePreparation"
     # 构建文件路径
     file_path = os.path.join(file_path, sample_preparation_id, f"{sample_preparation_id}.csv")
@@ -3586,7 +3653,9 @@ async def insert_injection_file_to_db(sample_preparation_id: str, db: Session = 
         raise http_exc
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
-
+    details = json.dumps(file_path)
+    crud.create_user_log(db, int(user_id), f"insert injection_file of: {sample_preparation_id} to db",
+                         details=details)
     return {"message": "CSV uploaded and stored in the database successfully"}
 
 
