@@ -191,13 +191,16 @@ class ImagingRecordSchema(BaseModel):
     sample_preparation_id: int
     producer: str
     status: str
-    Channels: Optional[int] = 1  # 默认值为 1
+    Dyes: Optional[int] = 1  # 默认值为 1
     Z_Size: Optional[float] = None
     Y_Size: Optional[float] = None
     X_Size: Optional[float] = None
     File_Size_GB: Optional[float] = None
     class Config:
         orm_mode = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()  # 自动转换 datetime
+        }
 
 class SamplePreparationSchema(BaseModel):
     id: Optional[int]
@@ -212,7 +215,10 @@ class SamplePreparationSchema(BaseModel):
     status: str
     operator: Optional[str] = None
     comment: Optional[str] = None
-    imaging_records: Optional[List[ImagingRecordSchema]] = []
+    imaging_records: Optional[List[ImagingRecordSchema]]
     created_at: Optional[datetime]
     class Config:
         orm_mode = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()  # 自动将 datetime 转换为字符串
+        }

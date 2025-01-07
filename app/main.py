@@ -3019,7 +3019,7 @@ def create_sample(sample: SamplePreparationSchema, Authorize: AuthJWT = Depends(
     db.add(db_sample)
     db.commit()
     db.refresh(db_sample)
-    details = json.dumps(SamplePreparationSchema.from_orm(db_sample).dict())
+    details = SamplePreparationSchema.from_orm(db_sample).json()
     crud.create_user_log(db, int(user_id),
                          f"create an new sample of: {id}",
                          details=details)
@@ -3034,21 +3034,22 @@ def update_sample(id: int, sample: SamplePreparationSchema, Authorize: AuthJWT =
     if not db_sample:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    # db_sample.sampleId = sample.sampleId
-    # db_sample.tissueId = sample.tissueId
-    # db_sample.rollId = sample.rollId
-    # db_sample.sliceId = sample.sliceId
-    # db_sample.blockId = sample.blockId
-    # db_sample.channels = sample.channels
-    # db_sample.needles = sample.needles
-    # db_sample.status = sample.status
-    # db_sample.operator = sample.operator
+    db_sample.sampleId = sample.sampleId
+    db_sample.tissueId = sample.tissueId
+    db_sample.rollId = sample.rollId
+    db_sample.sliceId = sample.sliceId
+    db_sample.blockId = sample.blockId
+    db_sample.injected_num = sample.injected_num
+    db_sample.channels = sample.channels
+    db_sample.needles = sample.needles
+    db_sample.status = sample.status
+    db_sample.operator = sample.operator
     db_sample.comment = sample.comment
-    # db_sample.injected_num = sample.injected_num
+
 
     db.commit()
     db.refresh(db_sample)
-    details = json.dumps(SamplePreparationSchema.from_orm(db_sample).dict())
+    details = SamplePreparationSchema.from_orm(db_sample).json()
     crud.create_user_log(db, int(user_id),
                          f"modify the sample preparation of: {id}",
                          details=details)
@@ -3066,12 +3067,11 @@ def delete_sample(id: int, Authorize: AuthJWT = Depends(),db: Session = Depends(
     # 删除SamplePreparation会自动删除关联的ImagingRecord（由于cascade和ondelete设置）
     db.delete(db_sample)
     db.commit()
-    details = json.dumps(SamplePreparationSchema.from_orm(db_sample).dict())
+    details = SamplePreparationSchema.from_orm(db_sample).json()
     crud.create_user_log(db, int(user_id),
                          f"delete the sample preparation of: {id}",
                          details=details)
     return {"message": f"SamplePreparation {id} deleted successfully."}
-
 
 ######################
 # ImagingRecord CRUD #

@@ -190,7 +190,7 @@ class ImagingRecord(Base):
     sample_preparation_id = Column(Integer, ForeignKey("sample_preparation.id", ondelete="CASCADE"))
     producer = Column(String(100))
     status = Column(Enum("imaged", "marked", "matched", 'inserted',name="status_enum"), default="imaged")
-    Channels = Column(Integer, default=1)  # 默认为 1
+    Dyes = Column(Integer, default=1)  # 默认为 1
     Z_Size = Column(Float, nullable=True)  # 可为 NULL
     Y_Size = Column(Float, nullable=True)
     X_Size = Column(Float, nullable=True)
