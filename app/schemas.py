@@ -209,11 +209,13 @@ class SamplePreparationSchema(BaseModel):
     rollId: str
     sliceId: str
     blockId: str
-    channels: int
+    dyes: int
     needles: int
     injected_num:int
+    dye_name: Optional[str]
+    perfusion_user: Optional[str]
+    perfusion_date: Optional[str]
     status: str
-    operator: Optional[str] = None
     comment: Optional[str] = None
     imaging_records: Optional[List[ImagingRecordSchema]]
     created_at: Optional[datetime]
