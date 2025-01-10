@@ -3304,7 +3304,7 @@ async def upload_imaging_map(imaging_map_file: UploadFile = File,Authorize: Auth
     user_id = Authorize.get_jwt_subject()
     responses = []
     file_name = imaging_map_file.filename
-    if "-map" in file_name:
+    if "_map" in file_name:
         folder_name = file_name.split("_map")[0]  # 提取-map之前的部分
     else:
         return JSONResponse(content={"message": "Invalid file name format", "file": file_name}, status_code=400)
