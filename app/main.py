@@ -3476,8 +3476,8 @@ REQUIRED_COLUMNS_NEW = [
     "AddingX",
     "AddingY",
     "AddingZ",
-    "FLresult",
-    "Needle_name"
+    # "FLresult",
+    # "Needle_name"
 ]
 @app.post("/api/upload_injection_file")
 async def upload_injection_file(
@@ -3566,8 +3566,11 @@ async def upload_injection_file(
         injection_num = df[df['Status'] != 'missing'].shape[0]
 
         # Calculate needles (unique values in needle_name column)
-        unique_needles = df['Needle_name'].dropna().unique().tolist()
-        needles = len(unique_needles)
+        if 'Needle_name' in df.columns:
+            unique_needles = df['Needle_name'].dropna().unique().tolist()
+            needles = len(unique_needles)
+        else:
+            needles = -1
 
         # Extract values from filename
         block_id = b_part if b_part else '--'
