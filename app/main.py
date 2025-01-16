@@ -3626,7 +3626,7 @@ async def upload_injection_file(
         combined_dye_names = ','.join(unique_dyes)
 
         # Calculate injected_num (count of non-'missing' status records)
-        injection_num = df[df['Status'] != 'missing'].shape[0]
+        injection_num = df[df['Status'] != 'Missing'].shape[0]
 
         # Calculate needles (unique values in needle_name column)
         if 'Needle_name' in df.columns:
