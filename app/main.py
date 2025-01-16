@@ -2,13 +2,15 @@
 import csv
 import mimetypes
 import shutil
+from io import StringIO
+
 import cv2
 import imageio
 import numpy as np
 from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File, Form, Header, Request, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy import func, desc, asc, Integer, create_engine, MetaData, Table, update, select, insert, cast
+from sqlalchemy import func, desc, asc, Integer, create_engine, MetaData, Table, update, select, insert, cast,text
 from fastapi.middleware.cors import CORSMiddleware
 from . import models, schemas, crud, foundPBD
 from .database import SessionLocal
@@ -3158,7 +3160,7 @@ def download_imaging_records_files(sample_preparation_id: str, imaging_id: str, 
                 zipf.write(file_path, arcname=os.path.basename(file_path))
 
         # 使用 BackgroundTask 延迟删除文件
-        # background_tasks.add_task(delete_file, zip_path)
+        background_tasks.add_task(delete_file, zip_path)
 
         # 返回压缩包文件
         return FileResponse(
@@ -3386,6 +3388,67 @@ def get_injection_file(sample_preparation_id: str):
 
     raise HTTPException(status_code=404, detail="Image not found")
 
+@app.get("/api/download_injection_records")
+async def download_sample_preparation(db: Session = Depends(get_db)):
+    try:
+        # 执行查询
+        query = text("SELECT * FROM sample_preparation")
+        result = db.execute(query)
+        rows = result.fetchall()
+
+        # 获取列名
+        column_names = result.keys()
+
+        # 写入到内存中的 CSV 文件
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(column_names)  # 写入表头
+        for row in rows:
+            writer.writerow(row)
+
+        # 重置内存中的文件指针
+        output.seek(0)
+
+        # 以 StreamingResponse 形式返回 CSV
+        return StreamingResponse(
+            output,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=injection_records.csv"}
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.get("/api/download_imaging_records")
+async def download_sample_preparation(db: Session = Depends(get_db)):
+    try:
+        # 执行查询
+        query = text('SELECT * FROM imaging_records')
+        result = db.execute(query)
+        rows = result.fetchall()
+
+        # 获取列名
+        column_names = result.keys()
+
+        # 写入到内存中的 CSV 文件
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(column_names)  # 写入表头
+        for row in rows:
+            writer.writerow(row)
+
+        # 重置内存中的文件指针
+        output.seek(0)
+
+        # 以 StreamingResponse 形式返回 CSV
+        return StreamingResponse(
+            output,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=imaging_records.csv"}
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.post("/api/upload_imaging_data/{sample_preparation_id}/{imaging_id}")
 async def upload_imaging_data(imaging_data_file: UploadFile = File, sample_preparation_id: str = '',Authorize: AuthJWT = Depends(),
