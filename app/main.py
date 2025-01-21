@@ -2740,9 +2740,12 @@ async def upload_imaging_metadata(
                         content={"message": "File uploaded successfully", "uploaded_files": uploaded_files})
 
 
-@app.post("/api/upload_imaging_marker")
+@app.post("/api/upload_imaging_marker/{sample_preparation_id}/{imaging_id}")
 async def upload_imaging_marker(
-        marker_file: UploadFile = File,Authorize: AuthJWT = Depends(),
+        marker_file: UploadFile = File,
+        Authorize: AuthJWT = Depends(),
+        sample_preparation_id: str = '',
+        imaging_id: str = '',
         db: Session = Depends(get_db)  # 注入数据库会话
 ):
     Authorize.jwt_required()
@@ -2860,15 +2863,15 @@ async def upload_imaging_marker(
                 # detail=f"Invalid 'name' entries in marker file '{file.filename}': {', '.join(invalid_names['name'].unique())}"
                 detail="Invalid C number in the 'name' column. Please check."
             )
-        sample_preparation_id = file.filename.split('.')[0]
-        # Check if file already exists
-        file_path = os.path.join(MARKER_FILES_DIR, file.filename)
-        if os.path.exists(file_path):
-            raise HTTPException(status_code=400, detail=f"'{file.filename}' already exists. Please check.")
-        print(6)
+        if imaging_id == '--':
+            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        else:
+            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+        os.makedirs(folder, exist_ok=True)
+        file_path = os.path.join(folder, file.filename)
         # Save file
         file.file.seek(0)
-        with open(file_path, "wb") as buffer:
+        with open(file_path, "wb+") as buffer:
             shutil.copyfileobj(file.file, buffer)
         uploaded_files.append(file.filename)
     except HTTPException as e:
