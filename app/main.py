@@ -2584,24 +2584,7 @@ async def upload_imaging_info(
     return JSONResponse(content={"message": "Files uploaded successfully", "uploaded_files": uploaded_files})
 
 
-import csv
-import re
-import os
-import shutil
-import json
-from io import StringIO
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import func, Integer
-from fastapi_jwt_auth import AuthJWT
-
-# from your_project import models, crud
-# from your_project.database import get_db
-
-router = APIRouter()
-
-@router.post("/api/upload_imaging_annotation_file/{sample_preparation_id}/{imaging_id}")
+@app.post("/api/upload_imaging_annotation_file/{sample_preparation_id}/{imaging_id}")
 async def upload_imaging_annotation_file(
     annotation_file: UploadFile = File(...),
     sample_preparation_id: str = '',
