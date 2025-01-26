@@ -2669,6 +2669,11 @@ async def upload_imaging_annotation_file(
                     detail=f"File {file.filename} has no header row or could not be parsed as CSV."
                 )
 
+            normalized_fieldnames = [name.strip() for name in csv_reader.fieldnames]
+            # Replace original fieldnames with stripped versions
+            csv_reader.fieldnames = normalized_fieldnames
+
+            # Check for missing columns
             missing_columns = [
                 col for col in required_columns
                 if col not in csv_reader.fieldnames
