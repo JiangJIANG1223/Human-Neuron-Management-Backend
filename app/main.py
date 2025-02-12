@@ -2582,7 +2582,130 @@ async def upload_imaging_info(
             raise HTTPException(status_code=500, detail={"error": str(e), "uploaded_files": uploaded_files})
 
     return JSONResponse(content={"message": "Files uploaded successfully", "uploaded_files": uploaded_files})
+@app.post("/api/upload_injection_file")
+async def upload_injection_file(
+    file: UploadFile = File(...),
+    Authorize: AuthJWT = Depends(),
+    db: Session = Depends(get_db)
+):
+    Authorize.jwt_required()
+    user_id = Authorize.get_jwt_subject()
+    sample_preparation_id = os.path.splitext(file.filename)[0]
+    upload_path = os.path.join("/mnt/nfs/hndb/SamplePreparation", sample_preparation_id)
+    os.makedirs(upload_path, exist_ok=True)
+    file_path = os.path.join(upload_path, file.filename)
 
+    # Read file content asynchronously
+    file_content = await file.read()
+
+    # Parse filename
+    file_name_without_ext = file.filename.rsplit('.', 1)[0]
+    pattern = re.match(r"^(P\d{5})-(T\d{3})-(R\d{3})-(S\d{3})(?:-(B\d))?$", file_name_without_ext)
+    if not pattern:
+        raise HTTPException(status_code=400, detail="Invalid file name format. Please check the format and try again.")
+
+    # Extract parts from filename
+    p_part, t_part, r_part, s_part, b_part = pattern.groups()
+    prefix = f"{p_part}_{t_part}_{r_part}_{s_part}"
+    if b_part:
+        prefix += f"_{b_part}"
+    prefix_pattern = re.compile(rf"^{re.escape(prefix)}_C\d+$")
+
+    try:
+        # Read CSV content into DataFrame
+        df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding='utf-8')
+
+        # Check if all required columns are present
+        missing_columns = [col for col in REQUIRED_COLUMNS_NEW if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing_columns)}")
+
+        # Check if 'Id' column exists
+        if 'Id' not in df.columns:
+            raise HTTPException(status_code=400, detail="CSV file must contain an ID column.")
+
+        # Validate 'Id' column against filename pattern
+        if not df['Id'].apply(lambda x: bool(prefix_pattern.match(str(x)))).all():
+            raise HTTPException(status_code=400, detail="File name does not match its ID column.")
+
+        # Check for duplicate C numbers
+        c_numbers = df['Id'].apply(lambda x: re.search(r"C\d{5}$", str(x)).group())
+        if c_numbers.duplicated().any():
+            raise HTTPException(status_code=400, detail="Duplicate C numbers found in ID column. Please check and re-upload.")
+
+        # Check for missing values in required columns (excluding 'perfusion_time' and 'AddingTime')
+        empty_columns = [col for col in REQUIRED_COLUMNS if
+                         col not in ["perfusion_time", "AddingTime"] and df[col].isnull().any()]
+        if empty_columns:
+            raise HTTPException(status_code=400, detail=f"Columns with missing values: {', '.join(empty_columns)}")
+
+        # Extract numerical parts from filename
+        p_number = int(p_part[1:])  # Remove 'P' and convert to int
+        t_number = int(t_part[1:])  # Remove 'T' and convert to int
+
+        # Validate P and T numbers in the database
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(status_code=400, detail="No matching sample found.")
+
+        # Save the file to the specified path
+        with open(file_path, "wb") as buffer:
+            buffer.write(file_content)
+
+        # Process 'perfusion_date' and 'perfusion_user'
+        perfusion_date = df['perfusion_date'].astype(str).iloc[0]
+        perfusion_user = df['perfusion_user'].astype(str).iloc[0]
+
+        # Process 'dye_name' to calculate unique dyes and combine their names
+        unique_dyes = df['dye_name'].dropna().unique().tolist()
+        dyes = len(unique_dyes)
+        combined_dye_names = ','.join(unique_dyes)
+
+        # Calculate injected_num (count of non-'missing' status records)
+        injection_num = df[df['Status'] != 'Missing'].shape[0]
+
+        # Calculate needles (unique values in needle_name column)
+        if 'Needle_name' in df.columns:
+            unique_needles = df['Needle_name'].dropna().unique().tolist()
+            needles = len(unique_needles)
+        else:
+            needles = -1
+
+        # Extract values from filename
+        block_id = b_part if b_part else '--'
+
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
+
+    # Log the upload action
+    details = json.dumps(file_path)
+    crud.create_user_log(db, int(user_id), f"Upload injection_file of: {sample_preparation_id}",
+                        details=details)
+
+    # Prepare response data
+    response_data = {
+        "id": None,
+        "sampleId": p_part,
+        "tissueId": t_part,
+        "rollId": r_part,
+        "sliceId": s_part,
+        "blockId": block_id,
+        "dyes": dyes,
+        "needles": needles,
+        "status": "injected",
+        "injected_num": injection_num,
+        "perfusion_user": perfusion_user,
+        "perfusion_date": perfusion_date,
+        "dye_name": combined_dye_names,
+    }
+
+    return response_data
 
 @app.post("/api/upload_imaging_annotation_file/{sample_preparation_id}/{imaging_id}")
 async def upload_imaging_annotation_file(
