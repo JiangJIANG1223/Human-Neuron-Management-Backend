@@ -3234,10 +3234,9 @@ def create_sample(sample: SamplePreparationSchema, Authorize: AuthJWT = Depends(
     db.add(db_sample)
     db.commit()
     db.refresh(db_sample)
-    details = SamplePreparationSchema.from_orm(db_sample).json()
+    # details = json.dumps(db_sample.sampleId)
     crud.create_user_log(db, int(user_id),
-                         f"create an new sample of: {id}",
-                         details=details)
+                         f"create an new sample of: {id}")
     return db_sample
 
 
@@ -3448,9 +3447,8 @@ def create_imaging_record(record: ImagingRecordSchema, Authorize: AuthJWT = Depe
     db.add(new_record)
     db.commit()
     db.refresh(new_record)
-    details = json.dumps(ImagingRecordSchema.from_orm(new_record).dict())
-    crud.create_user_log(db, int(user_id), f"create an new imaging_record of: {record.sample_preparation_id}-{record.imaging_id}",
-                         details=details)
+    # details = json.dumps(ImagingRecordSchema.from_orm(new_record).dict())
+    crud.create_user_log(db, int(user_id), f"create an new imaging_record of: {record.sample_preparation_id}-{record.imaging_id}")
     return new_record
 
 
@@ -3480,9 +3478,8 @@ def update_imaging_record(
 
     db.commit()
     db.refresh(db_record)
-    details = json.dumps(ImagingRecordSchema.from_orm(db_record).dict())
-    crud.create_user_log(db, int(user_id), f"modify the imaging_records of: {sample_preparation_id}-{imaging_id}",
-                         details=details)
+    # details = json.dumps(ImagingRecordSchema.from_orm(db_record).dict())
+    crud.create_user_log(db, int(user_id), f"modify the imaging_records of: {sample_preparation_id}-{imaging_id}")
     return db_record
 
 
@@ -3504,8 +3501,8 @@ def delete_imaging_record(sample_preparation_id: int, imaging_id: str, Authorize
 
     db.delete(db_record)
     db.commit()
-    details = json.dumps(ImagingRecordSchema.from_orm(db_record).dict())
-    crud.create_user_log(db, int(user_id), f"Delete imaging_records with id: {sample_preparation_id}-{imaging_id}",details=details)
+    # details = json.dumps(ImagingRecordSchema.from_orm(db_record).dict())
+    crud.create_user_log(db, int(user_id), f"Delete imaging_records with id: {sample_preparation_id}-{imaging_id}")
     return {
         "message": f"ImagingRecord with imaging_id '{imaging_id}' and sample_preparation_id '{sample_preparation_id}' deleted successfully."}
 
