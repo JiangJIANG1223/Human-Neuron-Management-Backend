@@ -165,7 +165,7 @@ class SampleInfoBase(BaseModel):
     treatment_naive: Optional[str] = None
     treatment_received: Optional[str] = None
     pathological_diagnosis: Optional[str] = None
-
+    tissue_type: Optional[str] = None
     sample_snapshot: Optional[str] = None
     sample_image: Optional[str] = None
     sample_annotation: Optional[str] = None

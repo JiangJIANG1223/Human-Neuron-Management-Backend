@@ -137,7 +137,7 @@ class Sample_Information(Base):
     treatment_naive = Column("Treatment Naive", String(255))
     treatment_received = Column("接受过何种治疗", Text)
     pathological_diagnosis = Column("病理诊断", String(255))
-
+    tissue_type = Column("tissue_type", String(255))
     sample_snapshot = Column("sample_snapshot", String(255))
     sample_image = Column("sample_image", String(255))
     sample_annotation = Column("sample_annotation", String(255))
