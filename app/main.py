@@ -1431,10 +1431,9 @@ def create_single_cell_data(data: schemas.HumanSingleCellTrackingTableCreate, Au
         logging.info(f"JWT subject: {user_id}")
         logging.info(f"User {user_id} is creating single cell data")
         single_cell_data = crud.create_single_cell_data(db=db, data=data)
-        sorted_details = sort_dict_by_order(data.dict(), field_order)
-        details = details = json.dumps(sorted_details)
-        crud.create_user_log(db, int(user_id), f"Create single cell data with id {single_cell_data.cell_id}",
-                             details=details)
+        # sorted_details = sort_dict_by_order(data.dict(), field_order)
+        # details = details = json.dumps(sorted_details)
+        crud.create_user_log(db, int(user_id), f"Create single cell data with id {single_cell_data.cell_id}")
 
         return single_cell_data
     except Exception as e:
@@ -1458,14 +1457,14 @@ def delete_single_cell_data(cell_id: str, Authorize: AuthJWT = Depends(), db: Se
         # 记录删除前的数据内容
         deleted_data_details = single_cell_data.__dict__.copy()
         del deleted_data_details['_sa_instance_state']
-        sorted_details = sort_dict_by_order(deleted_data_details, field_order)
-        details = json.dumps(sorted_details)
+        # sorted_details = sort_dict_by_order(deleted_data_details, field_order)
+        # details = json.dumps(sorted_details)
 
         # 执行删除操作
         deleted_data = crud.delete_single_cell_data(db=db, cell_id=cell_id)
 
         # 创建删除日志，记录详细信息
-        crud.create_user_log(db, int(user_id), f"Delete single cell data with id {cell_id}", details=details)
+        crud.create_user_log(db, int(user_id), f"Delete single cell data with id {cell_id}")
         return deleted_data
     except Exception as e:
         logging.error(f"Error deleting single cell data: {e}")
@@ -1497,8 +1496,8 @@ def update_single_cell_data(cell_id: str, data: schemas.HumanSingleCellTrackingT
             "updated": sort_dict_by_order(data.dict(), field_order)
         }
 
-        details = json.dumps(changes)
-        crud.create_user_log(db, int(user_id), f"Update single cell data with id {cell_id}", details=details)
+        # details = json.dumps(changes)
+        crud.create_user_log(db, int(user_id), f"Update single cell data with id {cell_id}")
         return updated_data
     except Exception as e:
         logging.error(f"Error updating single cell data: {e}")
@@ -1965,8 +1964,8 @@ def create_sample(sample: schemas.SampleInfoCreate, Authorize: AuthJWT = Depends
         db.refresh(db_sample)
 
         sorted_details = sort_dict_by_order(sample.dict(), sample_field_order)
-        details = json.dumps(sorted_details, ensure_ascii=False)  # ensure_ascii=False 用来正确处理中文内容，确保中文字符不被转义
-        crud.create_user_log(db, int(user_id), f"Create sample information with idx {db_sample.idx}", details=details)
+        # details = json.dumps(sorted_details, ensure_ascii=False)  # ensure_ascii=False 用来正确处理中文内容，确保中文字符不被转义
+        crud.create_user_log(db, int(user_id), f"Create sample information with idx {db_sample.idx}")
 
         return db_sample
     except Exception as e:
@@ -1998,8 +1997,8 @@ def update_sample_information(idx: int, updated_info: schemas.SampleInfoCreate, 
             "original": sort_dict_by_order(original_data, sample_field_order),
             "updated": sort_dict_by_order(updated_info.dict(), sample_field_order)
         }
-        details = json.dumps(changes, ensure_ascii=False)
-        crud.create_user_log(db, int(user_id), f"Update sample information with idx {idx}", details=details)
+        # details = json.dumps(changes, ensure_ascii=False)
+        crud.create_user_log(db, int(user_id), f"Update sample information with idx {idx}")
 
         return sample_info
     except Exception as e:
@@ -2021,12 +2020,12 @@ def delete_sample_information(idx: int, Authorize: AuthJWT = Depends(), db: Sess
         deleted_data_details = sample_info.__dict__.copy()
         del deleted_data_details['_sa_instance_state']
         sorted_details = sort_dict_by_order(deleted_data_details, sample_field_order)
-        details = json.dumps(sorted_details, ensure_ascii=False)
+        # details = json.dumps(sorted_details, ensure_ascii=False)
 
         db.delete(sample_info)
         db.commit()
 
-        crud.create_user_log(db, int(user_id), f"Delete sample information with idx {idx}", details=details)
+        crud.create_user_log(db, int(user_id), f"Delete sample information with idx {idx}")
         return sample_info
     except Exception as e:
         logging.error(f"Error deleting sample information: {e}")
