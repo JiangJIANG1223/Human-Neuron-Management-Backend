@@ -3263,10 +3263,9 @@ def update_sample(id: int, sample: SamplePreparationSchema, Authorize: AuthJWT =
 
     db.commit()
     db.refresh(db_sample)
-    details = SamplePreparationSchema.from_orm(db_sample).json()
+    # details = SamplePreparationSchema.from_orm(db_sample).json()
     crud.create_user_log(db, int(user_id),
-                         f"modify the sample preparation of: {id}",
-                         details=details)
+                         f"modify the sample preparation of: {id}")
     return db_sample
 
 
@@ -3281,10 +3280,9 @@ def delete_sample(id: int, Authorize: AuthJWT = Depends(),db: Session = Depends(
     # 删除SamplePreparation会自动删除关联的ImagingRecord（由于cascade和ondelete设置）
     db.delete(db_sample)
     db.commit()
-    details = SamplePreparationSchema.from_orm(db_sample).json()
+    # details = SamplePreparationSchema.from_orm(db_sample).json()
     crud.create_user_log(db, int(user_id),
-                         f"delete the sample preparation of: {id}",
-                         details=details)
+                         f"delete the sample preparation of: {id}")
     return {"message": f"SamplePreparation {id} deleted successfully."}
 
 ######################
