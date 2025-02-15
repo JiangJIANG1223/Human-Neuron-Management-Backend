@@ -198,9 +198,9 @@ class ImagingRecordSchema(BaseModel):
     File_Size_GB: Optional[float] = None
     class Config:
         orm_mode = True
-        json_encoders = {
-            datetime: lambda v: v.isoformat()  # 自动转换 datetime
-        }
+        # json_encoders = {
+        #     datetime: lambda v: v.isoformat()  # 自动转换 datetime
+        # }
 
 class SamplePreparationSchema(BaseModel):
     id: Optional[int]
@@ -221,6 +221,6 @@ class SamplePreparationSchema(BaseModel):
     created_at: Optional[datetime]
     class Config:
         orm_mode = True
-        json_encoders = {
-            datetime: lambda v: v.isoformat()  # 自动将 datetime 转换为字符串
-        }
+        # json_encoders = {
+        #     datetime: lambda v: v.isoformat()  # 自动将 datetime 转换为字符串
+        # }
