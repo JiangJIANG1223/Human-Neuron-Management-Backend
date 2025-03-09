@@ -43,6 +43,13 @@ import openai
 import parsedatetime
 import spacy
 
+# Import functions from our modules
+from app.singleColor_somas_imagingInfo_DB import process_single_file_pair as process_single_color_pair
+from app.multicolor_somas_imagingInfo_DB import process_single_file_pair as process_multi_color_pair
+from app.singleColor_cell_table import extract_imaging_and_injection_data as extract_single_color_data
+from app.singleColor_cell_table import extract_sample_information, generate_cell_csv, process_cell_csv
+from app.multicolor_cell_table import extract_imaging_and_injection_data as extract_multi_color_data
+
 app = FastAPI()
 
 app.add_middleware(
@@ -3912,6 +3919,379 @@ async def check_imaging_record_file_exists(filename: str, sample_preparation_id:
     if os.path.exists(file_path):
         return {"exists": True}
     return {"exists": False}
+
+
+#####auto insert to sql#######
+@app.post("/api/process-imaging-data/")
+async def process_imaging_data(
+        sample_preparation_id: str = Form(...),
+        imaging_id: str = Form(...),
+        is_multicolor: bool = Form(False),
+        db: Session = Depends(get_db),
+):
+    """Process APO and metadata files and insert into imaging_information table"""
+    # 构建目录路径
+    if imaging_id == '--':
+        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+    else:
+        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+
+    # 检查目录是否存在
+    if not os.path.exists(dir_path):
+        raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
+
+    # 查找.apo文件
+    apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
+    if not apo_files:
+        raise HTTPException(status_code=404, detail=f"未找到.apo文件在目录: {dir_path}")
+    apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+
+    # 查找元数据文件(.xml或.xlsx)
+    metadata_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path)
+                      if f.endswith('.xml') or f.endswith('.xlsx')]
+    if not metadata_files:
+        raise HTTPException(status_code=404, detail=f"未找到元数据文件(.xml或.xlsx)在目录: {dir_path}")
+    metadata_path = metadata_files[0]  # 取第一个匹配的元数据文件
+
+    try:
+        # 根据is_multicolor标志选择不同的处理函数
+        if is_multicolor:
+            result = process_multi_color_pair(apo_path, metadata_path)
+        else:
+            result = process_single_color_pair(apo_path, metadata_path)
+
+        if result["status"] != "success":
+            raise HTTPException(status_code=500, detail=result["message"])
+
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理文件时出错: {str(e)}")
+
+
+@app.post("/api/update-ptrs/")
+async def update_ptrs(db: Session = Depends(get_db)):
+    """Update PTRS(B) columns in database tables"""
+    try:
+        # Update injection table
+        injection_update_query = """
+        UPDATE injection_table_20241028
+        SET `PTRS(B)` = CASE
+            WHEN file_name REGEXP '^(P[0-9]+-T[0-9]+-R[0-9]+-S[0-9]+-B[0-9]+)' THEN
+                SUBSTRING_INDEX(SUBSTRING_INDEX(file_name, '.', 1), '-', 5)
+            WHEN file_name REGEXP '^(P[0-9]+-T[0-9]+-R[0-9]+-S[0-9]+)' THEN
+                SUBSTRING_INDEX(SUBSTRING_INDEX(file_name, '.', 1), '-', 4)
+            ELSE NULL
+        END;
+        """
+        db.execute(text(injection_update_query))
+
+        # Update imaging information table
+        imaging_update_query = """
+        UPDATE imaging_information_20241023
+        SET `PTRS(B)` = 
+          CASE
+            WHEN SUBSTRING(
+              SUBSTRING_INDEX(
+                SUBSTRING_INDEX(SUBSTRING_INDEX(apo_file, '.', 1), '-', 5), 
+                '-', -1
+              ), 1, 1
+            ) = 'B' THEN
+              SUBSTRING_INDEX(SUBSTRING_INDEX(apo_file, '.', 1), '-', 5)
+            ELSE
+              SUBSTRING_INDEX(SUBSTRING_INDEX(apo_file, '.', 1), '-', 4)
+          END
+        WHERE `PTRS(B)` IS NULL;
+        """
+        db.execute(text(imaging_update_query))
+        db.commit()
+
+        return {"status": "success", "message": "PTRS(B) 列已成功更新"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.post("/api/generate-cell-table/")
+async def generate_cell_table(
+        sample_preparation_id: str = Form(...),
+        imaging_id: str = Form(...),
+        ptrs: str = Query(..., description="PTRS(B) 值"),
+        is_multicolor: bool = Query(False, description="是否多色"),
+):
+    """Generate cell table CSV for specified PTRS"""
+    try:
+        if imaging_id == '--':
+            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        else:
+            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+
+        # Create temp file paths
+        temp_dir = dir_path
+        os.makedirs(temp_dir, exist_ok=True)
+        without_cell_id = os.path.join(temp_dir, f"cell_without_cellID.csv")
+        # with_cell_id = os.path.join(temp_dir, f"cell_with_cellID.csv")
+
+        # Extract data based on type
+        if is_multicolor:
+            merged_df = extract_multi_color_data(ptrsb=ptrs)
+        else:
+            merged_df = extract_single_color_data(ptrsb=ptrs)
+
+        # Extract sample info and generate initial CSV
+        extracted_df = extract_sample_information(merged_df)
+        final_df = generate_cell_csv(extracted_df, output_path=without_cell_id)
+
+        # Process CSV with cell IDs
+        # result_df = process_cell_csv(final_df, start_cell_id=start_cell_id,outpath=with_cell_id)
+
+        # return FileResponse(
+        #     without_cell_id,
+        #     media_type="text/csv",
+        #     filename=f"{ptrs}_cell_table.csv"
+        # )
+        return without_cell_id
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/import-cell-table/")
+async def import_cell_table(
+        sample_preparation_id: str = Form(...),
+        imaging_id: str = Form(...),
+        db: Session = Depends(get_db)
+):
+    if imaging_id == '--':
+        temp_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+    else:
+        temp_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+    without_cell_id = os.path.join(temp_dir, "cell_without_cellID.csv")
+    with_cell_id = os.path.join(temp_dir, "cell_with_cellID.csv")
+
+    # Check if the generated file exists
+    if not os.path.exists(without_cell_id):
+        raise HTTPException(status_code=404, detail="Cell table file not found. Please generate it first.")
+
+    # Read the CSV into a DataFrame
+    final_df = pd.read_csv(without_cell_id)
+
+    # Get the current maximum Cell ID from the database and add 1
+    result = db.execute(text("SELECT MAX(`Cell ID`) FROM human_singlecell_trackingtable_20240712")).fetchone()
+    try:
+        current_max_id = int(result[0]) if result[0] is not None else 0
+    except (ValueError, TypeError):
+        # Handle case where result[0] is not convertible to int
+        current_max_id = 0
+
+    start_cell_id = current_max_id + 1
+
+    # Process the CSV with the new start_cell_id
+    process_cell_csv(final_df, start_cell_id, with_cell_id)
+
+
+    """Import cell table to database and generate marker files"""
+    # 构建 cell.csv 文件路径
+    file_path = with_cell_id
+    # 检查文件是否存在
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"文件不存在: {file_path}")
+
+    # 设置临时文件路径
+    temp_path = with_cell_id
+    marker_files = []
+
+    try:
+        # 读取 CSV 文件
+        df = pd.read_csv(temp_path, encoding='UTF-8')
+
+        # 生成 Marker 文件
+        marker_folder = temp_dir
+        os.makedirs(marker_folder, exist_ok=True)
+
+        # 对每个 Document Name 分组并生成 Marker 文件
+        for doc_name, group_df in df.groupby('Document Name'):
+            # 构造新的 DataFrame，对应 Marker 文件字段
+            out_df = pd.DataFrame()
+
+            # 对坐标列做 float 转换
+            out_df['##x'] = group_df['soma_x'].astype(float)
+            out_df['y'] = group_df['soma_y'].astype(float)
+            out_df['z'] = group_df['soma_z'].astype(float)
+
+            # 固定值：radius=1, shape=1, 颜色=红(255,0,0)
+            out_df['radius'] = 1
+            out_df['shape'] = 1
+            out_df['color_r'] = 255
+            out_df['color_g'] = 0
+            out_df['color_b'] = 0
+
+            # name 列取自原始数据的 'Cell ID'
+            out_df['name'] = group_df['Cell ID'].astype(str)
+
+            # comment 列取自分组名 doc_name（即 Document Name）
+            out_df['comment'] = doc_name
+
+            # 指定输出文件名：<document_name>_somalist.marker
+            out_filename = f"{doc_name}_somalist.marker"
+            out_path = os.path.join(marker_folder, out_filename)
+
+            # 指定列顺序，导出 Marker 文件
+            col_order = [
+                '##x', 'y', 'z', 'radius', 'shape', 'name', 'comment',
+                'color_r', 'color_g', 'color_b'
+            ]
+            out_df[col_order].to_csv(
+                out_path,
+                index=False,
+                float_format='%.3f'
+            )
+            marker_files.append(out_filename)
+
+        # 将数据插入到 human_singlecell_trackingtable_20240712 表中
+        df['soma_x'] = '--'
+        df['soma_y'] = '--'
+        df['soma_z'] = '--'
+        df = df.replace({np.nan: '--'})
+
+        # 获取数据库表
+        table_name = 'human_singlecell_trackingtable_20240712'
+        for index, row in df.iterrows():
+            # 创建列名列表和值列表
+            columns = list(row.index)
+            values = list(row.values)
+
+            # 构建插入SQL
+            columns_str = ", ".join([f"`{col}`" for col in columns])
+            placeholders = ", ".join([":" + str(i) for i in range(len(values))])
+
+            # 创建参数字典
+            params = {str(i): val for i, val in enumerate(values)}
+
+            # 执行插入
+            insert_sql = text(f"INSERT INTO {table_name} ({columns_str}) VALUES ({placeholders})")
+            db.execute(insert_sql, params)
+
+        # 提交事务
+        db.commit()
+
+        return {
+            "status": "success",
+            "message": "数据已成功导入并生成标记文件",
+            "inserted_rows": len(df),
+            "marker_files": marker_files
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"导入失败: {str(e)}")
+
+
+@app.post("/api/preview_insert_sql/")
+async def complete_workflow(
+        is_multicolor: bool = Form(False),
+        sample_preparation_id: str = Form(...),
+        imaging_id: str = Form(...),
+        db: Session = Depends(get_db),
+):
+    """Execute the complete workflow from injection data to cell table generation"""
+    try:
+        # 构建目录路径
+        if imaging_id == '--':
+            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        else:
+            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+
+        # 检查目录是否存在
+        if not os.path.exists(dir_path):
+            raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
+
+        # 查找.apo文件
+        apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
+        if not apo_files:
+            raise HTTPException(status_code=404, detail=f"在目录 {dir_path} 中找不到.apo文件")
+        apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+
+
+        # Step 2: Process imaging data
+        imaging_result = await process_imaging_data(sample_preparation_id, imaging_id, is_multicolor, db)
+
+        # Step 3: Update PTRS(B) columns
+        ptrs_result = await update_ptrs(db)
+
+        # Extract PTRS from filename
+        apo_filename = os.path.basename(apo_path)
+        ptrs_match = re.search(r'(P\d+-T\d+-R\d+-S\d+(?:-B\d+)?)', apo_filename)
+        if not ptrs_match:
+            raise HTTPException(status_code=400, detail="无法从文件名提取PTRS(B)")
+        ptrs = ptrs_match.group(1)
+
+        # Step 4: Generate cell table
+        file_path = await generate_cell_table(
+            sample_preparation_id = sample_preparation_id,
+            imaging_id = imaging_id,
+            ptrs=ptrs,
+            is_multicolor=is_multicolor,
+        )
+
+        if os.path.exists(file_path):
+            filename = os.path.basename(file_path)
+            return FileResponse(
+                path=file_path,
+                filename=filename,
+                media_type="text/csv"
+            )
+        else:
+            raise HTTPException(status_code=404, detail="Generated file not found")
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Workflow execution failed: {str(e)}")
+
+
+@app.get("/api/database-info/")
+async def database_info(db: Session = Depends(get_db)):
+    """Get database information"""
+    try:
+        # Check database connection
+        result = db.execute(text("SELECT VERSION()"))
+        version = result.scalar()
+
+        # Get injection table count
+        injection_count = db.execute(text("SELECT COUNT(*) FROM injection_table_20241028")).scalar()
+
+        # Get imaging info table count
+        imaging_count = db.execute(text("SELECT COUNT(*) FROM imaging_information_20241023")).scalar()
+
+        # Get cell table count
+        cell_count = db.execute(text("SELECT COUNT(*) FROM human_singlecell_trackingtable_20240712")).scalar()
+
+        return {
+            "status": "connected",
+            "mysql_version": version,
+            "injection_table_count": injection_count,
+            "imaging_info_count": imaging_count,
+            "cell_table_count": cell_count
+        }
+    except SQLAlchemyError as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/ptrs-list/")
+async def get_ptrs_list(db: Session = Depends(get_db)):
+    """Get a list of available PTRS(B) values"""
+    try:
+        result = db.execute(
+            text("""
+            SELECT DISTINCT `PTRS(B)` 
+            FROM injection_table_20241028 
+            WHERE `PTRS(B)` IS NOT NULL
+            ORDER BY `PTRS(B)`
+            """)
+        )
+        ptrs_list = [row[0] for row in result.fetchall()]
+
+        return {"status": "success", "ptrs_list": ptrs_list}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 ### LLMs 部分
