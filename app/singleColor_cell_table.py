@@ -82,13 +82,13 @@ def extract_imaging_and_injection_data(ptrsb):
         secondAntibody_band, 
         DAPI_concentration
     FROM injection_table_20241028
-    WHERE `PTRS(B)` IN ({placeholders})
+    WHERE `PTRS(B)` = :ptrsb
     """
     # 执行查询，传入参数
     imaging_result = connection.execute(text(imaging_query), {"ptrsb": ptrsb})
     imaging_df = pd.DataFrame(imaging_result.fetchall(), columns=imaging_result.keys())
     
-    injection_result = connection.execute(text(injection_query), params)
+    injection_result = connection.execute(text(injection_query), {"ptrsb": ptrsb})
     injection_df = pd.DataFrame(injection_result.fetchall(), columns=injection_result.keys())
     
     # 确保 'PTRS(B)' 列的数据类型一致

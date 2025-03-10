@@ -353,18 +353,18 @@ def insert_to_db(apo_data, imaging_info, apo_file, imaging_file):
     print(f"成功插入数据：{apo_file_basename} 和 {imaging_file_basename}")
 
     # 重命名已处理的文件，添加 '_DB' 后缀
-    try:
-        apo_file_root, apo_file_ext = os.path.splitext(apo_file)
-        new_apo_file = apo_file_root + '_DB' + apo_file_ext
-        os.rename(apo_file, new_apo_file)
-        print(f"重命名 apo 文件：{apo_file} -> {new_apo_file}")
-
-        imaging_file_root, imaging_file_ext = os.path.splitext(imaging_file)
-        new_imaging_file = imaging_file_root + '_DB' + imaging_file_ext
-        os.rename(imaging_file, new_imaging_file)
-        print(f"重命名元数据文件：{imaging_file} -> {new_imaging_file}")
-    except Exception as e:
-        print(f"重命名文件时出错：{e}")
+    # try:
+    #     apo_file_root, apo_file_ext = os.path.splitext(apo_file)
+    #     new_apo_file = apo_file_root + '_DB' + apo_file_ext
+    #     os.rename(apo_file, new_apo_file)
+    #     print(f"重命名 apo 文件：{apo_file} -> {new_apo_file}")
+    #
+    #     imaging_file_root, imaging_file_ext = os.path.splitext(imaging_file)
+    #     new_imaging_file = imaging_file_root + '_DB' + imaging_file_ext
+    #     os.rename(imaging_file, new_imaging_file)
+    #     print(f"重命名元数据文件：{imaging_file} -> {new_imaging_file}")
+    # except Exception as e:
+    #     print(f"重命名文件时出错：{e}")
 
 def extract_identifier(filename):
     """

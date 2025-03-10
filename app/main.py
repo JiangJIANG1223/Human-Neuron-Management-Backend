@@ -4204,6 +4204,37 @@ async def complete_workflow(
         if not os.path.exists(dir_path):
             raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
 
+        injection_file = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}.csv"
+
+        # 检查文件是否存在
+        if not os.path.exists(injection_file):
+            raise HTTPException(status_code=404, detail=f"CSV file not found at {injection_file}")
+
+        try:
+            # 读取CSV文件
+            df = pd.read_csv(injection_file)
+
+            # 定义表结构并插入数据
+            table = Table('injection_table_20241028', MetaData(), autoload_with=db.bind)
+            df['PTRS(B)'] = str(sample_preparation_id)
+            for _, row in df.iterrows():
+                row_dict = row.to_dict()
+                # Make sure the key name exactly matches how SQLAlchemy refers to the column
+                row_dict['`PTRS(B)`'] = row_dict.pop('PTRS(B)')  # Change key format if needed
+                stmt = insert(table).values(row_dict)
+                db.execute(stmt)
+            db.commit()
+            print('insert injection success')
+        except SQLAlchemyError as db_error:
+            db.rollback()
+            print(f"Database insertion failed: {db_error}")
+            raise HTTPException(status_code=400, detail=f"Database insertion failed: {str(db_error)}")
+        except Exception as e:
+            print(f"Error processing CSV file: {e}")
+            raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
+
+
+
         # 查找.apo文件
         apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
         if not apo_files:
