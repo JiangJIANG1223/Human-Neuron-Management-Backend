@@ -10,211 +10,213 @@ import re
 DATABASE_URI = "mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron"
 # DATABASE_URI = 'mysql+pymysql://root:wlj990521@10.194.35.182/hndb'
 engine = db.create_engine(DATABASE_URI)
-connection = engine.connect()
+# connection = engine.connect()
 
 # 1. 从 imaging_information_20241023 和 injection_table_20241028 中提取数据
 def extract_imaging_and_injection_data(ptrsb):
-    # 首先，获取满足条件的 PTRS(B)
-    ptrs_b_query = """
-    SELECT `PTRS(B)` 
-    FROM injection_table_20241028
-    GROUP BY `PTRS(B)` 
-    HAVING COUNT(DISTINCT dye_name) > 1
-    """
-    ptrs_b_result = connection.execute(text(ptrs_b_query))
-    ptrs_b_list = [row[0] for row in ptrs_b_result.fetchall()]
-    
-    # 确保 ptrs_b_list 不为空
-    if not ptrs_b_list:
-        print("没有满足条件的 PTRS(B)。")
-        return pd.DataFrame()  # 返回空的 DataFrame
+    with engine.connect() as connection:
+        # 首先，获取满足条件的 PTRS(B)
+        ptrs_b_query = """
+        SELECT `PTRS(B)` 
+        FROM injection_table_20241028
+        GROUP BY `PTRS(B)` 
+        HAVING COUNT(DISTINCT dye_name) > 1
+        """
+        ptrs_b_result = connection.execute(text(ptrs_b_query))
+        ptrs_b_list = [row[0] for row in ptrs_b_result.fetchall()]
 
-    # 将 PTRS(B) 列表转换为用于 SQL 查询的字符串
-    # 为防止 SQL 注入，使用参数化查询
-    placeholders = ','.join([':ptrs_b{}'.format(i) for i in range(len(ptrs_b_list))])
-    params = {'ptrs_b{}'.format(i): ptrs_b_list[i] for i in range(len(ptrs_b_list))}
+        # 确保 ptrs_b_list 不为空
+        if not ptrs_b_list:
+            print("没有满足条件的 PTRS(B)。")
+            return pd.DataFrame()  # 返回空的 DataFrame
 
-    params['idx_threshold'] = 12961  # 添加 idx 的参数
-    
-    # 修改 imaging_query，增加条件
-    imaging_query = f"""
-    SELECT 
-        idx AS imaging_idx,
-        `PTRS(B)`,
-        ID AS injection_ID,
-        metadata_file,
-        apo_file,  
-        imaging_device,
-        laser_wavelength, 
-        laser_power, 
-        laser_power_ratio, 
-        gain, 
-        scanner, 
-        averaging, 
-        pmt_voltage, 
-        z_size, 
-        tiling, 
-        overlap, 
-        xy_resolution, 
-        z_resolution,
-        document_name, 
-        image_size, 
-        shooting_date, 
-        shooting_staff, 
-        soma_x, 
-        soma_y,
-        soma_z
-    FROM imaging_information_20241023
-    WHERE `PTRS(B)` = :ptrsb
-    """
-    injection_query = f"""
-    SELECT 
-        `PTRS(B)`,
-        file_name AS injection_file, 
-        sample_preparation_date,
-        sample_preparation_staff, 
-        fresh_perfusion, 
-        slice_thickness, 
-        experiment_temperature,  
-        perfusion_user AS perfusion_staff        
-    FROM injection_table_20241028
-    WHERE `PTRS(B)` = :ptrsb
-    """
-    # 执行查询，传入参数
-    imaging_result = connection.execute(text(imaging_query), {"ptrsb": ptrsb})
-    imaging_df = pd.DataFrame(imaging_result.fetchall(), columns=imaging_result.keys())
-    
-    injection_result = connection.execute(text(injection_query), {"ptrsb": ptrsb})
-    injection_df = pd.DataFrame(injection_result.fetchall(), columns=injection_result.keys())
-    
-    # 确保 'PTRS(B)' 列的数据类型一致
-    imaging_df['PTRS(B)'] = imaging_df['PTRS(B)'].astype(str)
-    injection_df['PTRS(B)'] = injection_df['PTRS(B)'].astype(str)
-    
-    # 检查 injection_df 中相同 PTRS(B) 的注射信息是否一致
-    # 去除 'PTRS(B)' 列和 'injection_file' 列，用于比较
-    injection_info_columns = injection_df.columns.difference(['PTRS(B)', 'injection_file'])
-    inconsistent_injections = injection_df.groupby('PTRS(B)')[injection_info_columns.tolist()].nunique()
-    inconsistent_ptrs = inconsistent_injections[(inconsistent_injections > 1).any(axis=1)].index.tolist()
-    
-    if inconsistent_ptrs:
-        print("警告：以下 PTRS(B) 存在不一致的灌注信息：")
-        # 对每个存在不一致的 PTRS(B)，找出具体不一致的列
-        for ptrs_b in inconsistent_ptrs:
-            cols = inconsistent_injections.loc[ptrs_b]
-            inconsistent_cols = cols[cols > 1].index.tolist()
-            print(f"PTRS(B): {ptrs_b}, 不一致的列: {inconsistent_cols}")
-        # 根据需求处理不一致的数据，例如抛出异常或手动处理
-        # 在此示例中，我们选择抛出异常
-        raise ValueError(f"灌注信息不一致，无法合并。请检查 PTRS(B)：{inconsistent_ptrs}")
+        # 将 PTRS(B) 列表转换为用于 SQL 查询的字符串
+        # 为防止 SQL 注入，使用参数化查询
+        placeholders = ','.join([':ptrs_b{}'.format(i) for i in range(len(ptrs_b_list))])
+        params = {'ptrs_b{}'.format(i): ptrs_b_list[i] for i in range(len(ptrs_b_list))}
 
-    else:
-        # 灌注信息一致，可以安全地去重
-        injection_df_unique = injection_df.drop_duplicates(subset='PTRS(B)')
-    
-    # 以 imaging_df 为基准，基于 PTRS(B) 列合并
-    merged_df = pd.merge(imaging_df, injection_df_unique, on='PTRS(B)', how='left')
-    
-    # 检查是否有未匹配的记录
-    unmatched_ptrs_b = imaging_df[~imaging_df['PTRS(B)'].isin(injection_df_unique['PTRS(B)'])]['PTRS(B)'].unique()
-    if len(unmatched_ptrs_b) > 0:
-        print("警告：以下 PTRS(B) 在 injection_df 中未找到匹配的记录：")
-        print(unmatched_ptrs_b)
-    
-    return merged_df
+        params['idx_threshold'] = 12961  # 添加 idx 的参数
+
+        # 修改 imaging_query，增加条件
+        imaging_query = f"""
+        SELECT 
+            idx AS imaging_idx,
+            `PTRS(B)`,
+            ID AS injection_ID,
+            metadata_file,
+            apo_file,  
+            imaging_device,
+            laser_wavelength, 
+            laser_power, 
+            laser_power_ratio, 
+            gain, 
+            scanner, 
+            averaging, 
+            pmt_voltage, 
+            z_size, 
+            tiling, 
+            overlap, 
+            xy_resolution, 
+            z_resolution,
+            document_name, 
+            image_size, 
+            shooting_date, 
+            shooting_staff, 
+            soma_x, 
+            soma_y,
+            soma_z
+        FROM imaging_information_20241023
+        WHERE `PTRS(B)` = :ptrsb
+        """
+        injection_query = f"""
+        SELECT 
+            `PTRS(B)`,
+            file_name AS injection_file, 
+            sample_preparation_date,
+            sample_preparation_staff, 
+            fresh_perfusion, 
+            slice_thickness, 
+            experiment_temperature,  
+            perfusion_user AS perfusion_staff        
+        FROM injection_table_20241028
+        WHERE `PTRS(B)` = :ptrsb
+        """
+        # 执行查询，传入参数
+        imaging_result = connection.execute(text(imaging_query), {"ptrsb": ptrsb})
+        imaging_df = pd.DataFrame(imaging_result.fetchall(), columns=imaging_result.keys())
+
+        injection_result = connection.execute(text(injection_query), {"ptrsb": ptrsb})
+        injection_df = pd.DataFrame(injection_result.fetchall(), columns=injection_result.keys())
+
+        # 确保 'PTRS(B)' 列的数据类型一致
+        imaging_df['PTRS(B)'] = imaging_df['PTRS(B)'].astype(str)
+        injection_df['PTRS(B)'] = injection_df['PTRS(B)'].astype(str)
+
+        # 检查 injection_df 中相同 PTRS(B) 的注射信息是否一致
+        # 去除 'PTRS(B)' 列和 'injection_file' 列，用于比较
+        injection_info_columns = injection_df.columns.difference(['PTRS(B)', 'injection_file'])
+        inconsistent_injections = injection_df.groupby('PTRS(B)')[injection_info_columns.tolist()].nunique()
+        inconsistent_ptrs = inconsistent_injections[(inconsistent_injections > 1).any(axis=1)].index.tolist()
+
+        if inconsistent_ptrs:
+            print("警告：以下 PTRS(B) 存在不一致的灌注信息：")
+            # 对每个存在不一致的 PTRS(B)，找出具体不一致的列
+            for ptrs_b in inconsistent_ptrs:
+                cols = inconsistent_injections.loc[ptrs_b]
+                inconsistent_cols = cols[cols > 1].index.tolist()
+                print(f"PTRS(B): {ptrs_b}, 不一致的列: {inconsistent_cols}")
+            # 根据需求处理不一致的数据，例如抛出异常或手动处理
+            # 在此示例中，我们选择抛出异常
+            raise ValueError(f"灌注信息不一致，无法合并。请检查 PTRS(B)：{inconsistent_ptrs}")
+
+        else:
+            # 灌注信息一致，可以安全地去重
+            injection_df_unique = injection_df.drop_duplicates(subset='PTRS(B)')
+
+        # 以 imaging_df 为基准，基于 PTRS(B) 列合并
+        merged_df = pd.merge(imaging_df, injection_df_unique, on='PTRS(B)', how='left')
+
+        # 检查是否有未匹配的记录
+        unmatched_ptrs_b = imaging_df[~imaging_df['PTRS(B)'].isin(injection_df_unique['PTRS(B)'])]['PTRS(B)'].unique()
+        if len(unmatched_ptrs_b) > 0:
+            print("警告：以下 PTRS(B) 在 injection_df 中未找到匹配的记录：")
+            print(unmatched_ptrs_b)
+
+        return merged_df
 
 # 2. 从 sample_information_20240815 中提取 brain_region 和 tissue_dissection_time
 def extract_sample_information(merged_df):
-    sample_query = """
-    SELECT 
-        `病人编号`, `组织编号`, `英文简称(南京编)` AS brain_region, `手术日期`, `取下时间`
-    FROM sample_information_20240815
-    """
-    sample_result = connection.execute(text(sample_query))
-    
-    # 使用 DataFrame 构造函数，将查询结果转换为 DataFrame
-    sample_df = pd.DataFrame(sample_result.fetchall(), columns=sample_result.keys())
-    
-    # 只保留 `病人编号` 以 'P' 开头且 `组织编号` 以 'T' 开头的行
-    sample_df = sample_df[
-        sample_df['病人编号'].str.startswith('P', na=False) &
-        sample_df['组织编号'].str.startswith('T', na=False)
-    ]
-    print('sample_df: ', sample_df)
-    
-    # 定义函数处理编号，提取数值部分
-    def extract_number(s, prefix):
-        if pd.isnull(s):
+    with engine.connect() as connection:
+        sample_query = """
+        SELECT 
+            `病人编号`, `组织编号`, `英文简称(南京编)` AS brain_region, `手术日期`, `取下时间`
+        FROM sample_information_20240815
+        """
+        sample_result = connection.execute(text(sample_query))
+
+        # 使用 DataFrame 构造函数，将查询结果转换为 DataFrame
+        sample_df = pd.DataFrame(sample_result.fetchall(), columns=sample_result.keys())
+
+        # 只保留 `病人编号` 以 'P' 开头且 `组织编号` 以 'T' 开头的行
+        sample_df = sample_df[
+            sample_df['病人编号'].str.startswith('P', na=False) &
+            sample_df['组织编号'].str.startswith('T', na=False)
+        ]
+        print('sample_df: ', sample_df)
+
+        # 定义函数处理编号，提取数值部分
+        def extract_number(s, prefix):
+            if pd.isnull(s):
+                return None
+            s = str(s).strip()
+            if s.startswith(prefix):
+                num_part = s[len(prefix):]
+                # 去掉前导零
+                num_part = num_part.lstrip('0')
+                if num_part.isdigit():
+                    return int(num_part)
             return None
-        s = str(s).strip()
-        if s.startswith(prefix):
-            num_part = s[len(prefix):]
-            # 去掉前导零
-            num_part = num_part.lstrip('0')
-            if num_part.isdigit():
-                return int(num_part)
-        return None
-    
-    # 为 sample_df 添加 P_number_value 和 T_number_value 列，提取数值部分
-    sample_df['P_number_value'] = sample_df['病人编号'].apply(lambda x: extract_number(x, 'P'))
-    sample_df['T_number_value'] = sample_df['组织编号'].apply(lambda x: extract_number(x, 'T'))
-    
-    # 为 merged_df 添加 P_number_value 和 T_number_value 列，提取数值部分
-    # 修改分隔符为 '_'
-    merged_df['P_number_value'] = merged_df['PTRS(B)'].apply(lambda x: extract_number(x.split('-')[0], 'P'))
-    merged_df['T_number_value'] = merged_df['PTRS(B)'].apply(
-        lambda x: extract_number(x.split('-')[1], 'T') if len(x.split('-')) > 1 else None
-    )
 
-    # 使用数值部分进行合并
-    extracted_df = pd.merge(merged_df, sample_df, on=['P_number_value', 'T_number_value'], how='left')
-    print('extracted_df: ', extracted_df)
-    
-    # 处理 tissue_dissection_time 列
-    def format_tissue_dissection_time(row):
-        surgery_date = row['手术日期']
-        removal_time = row['取下时间']
-        
-        # 如果手术日期为空，返回空字符串
-        if pd.isnull(surgery_date):
-            return ''
-        
-        # 如果取下时间为空或异常，填充为 '00:00'
-        if pd.isnull(removal_time) or removal_time in [None, '', '--', '-']:
-            removal_time = '00:00'
-        
-        try:
-            # 清洗 removal_time 字符串
-            removal_time = str(removal_time).strip()
-            # 使用正则表达式匹配有效的时间格式 HH:MM，分钟部分可选
-            match = re.match(r'^(\d{1,2})(?:[:-]?(\d{0,2}))?$', removal_time)
-            if match:
-                hours = match.group(1).zfill(2)
-                minutes = match.group(2).zfill(2) if match.group(2) else '00'
-                removal_time_clean = f"{hours}:{minutes}"
-                datetime_str = f"{surgery_date} {removal_time_clean}"
-                datetime_obj = pd.to_datetime(datetime_str, errors='coerce')
-                if pd.isnull(datetime_obj):
-                    print(f"日期转换错误: 无法解析日期时间字符串 '{datetime_str}'")
+        # 为 sample_df 添加 P_number_value 和 T_number_value 列，提取数值部分
+        sample_df['P_number_value'] = sample_df['病人编号'].apply(lambda x: extract_number(x, 'P'))
+        sample_df['T_number_value'] = sample_df['组织编号'].apply(lambda x: extract_number(x, 'T'))
+
+        # 为 merged_df 添加 P_number_value 和 T_number_value 列，提取数值部分
+        # 修改分隔符为 '_'
+        merged_df['P_number_value'] = merged_df['PTRS(B)'].apply(lambda x: extract_number(x.split('-')[0], 'P'))
+        merged_df['T_number_value'] = merged_df['PTRS(B)'].apply(
+            lambda x: extract_number(x.split('-')[1], 'T') if len(x.split('-')) > 1 else None
+        )
+
+        # 使用数值部分进行合并
+        extracted_df = pd.merge(merged_df, sample_df, on=['P_number_value', 'T_number_value'], how='left')
+        print('extracted_df: ', extracted_df)
+
+        # 处理 tissue_dissection_time 列
+        def format_tissue_dissection_time(row):
+            surgery_date = row['手术日期']
+            removal_time = row['取下时间']
+
+            # 如果手术日期为空，返回空字符串
+            if pd.isnull(surgery_date):
+                return ''
+
+            # 如果取下时间为空或异常，填充为 '00:00'
+            if pd.isnull(removal_time) or removal_time in [None, '', '--', '-']:
+                removal_time = '00:00'
+
+            try:
+                # 清洗 removal_time 字符串
+                removal_time = str(removal_time).strip()
+                # 使用正则表达式匹配有效的时间格式 HH:MM，分钟部分可选
+                match = re.match(r'^(\d{1,2})(?:[:-]?(\d{0,2}))?$', removal_time)
+                if match:
+                    hours = match.group(1).zfill(2)
+                    minutes = match.group(2).zfill(2) if match.group(2) else '00'
+                    removal_time_clean = f"{hours}:{minutes}"
+                    datetime_str = f"{surgery_date} {removal_time_clean}"
+                    datetime_obj = pd.to_datetime(datetime_str, errors='coerce')
+                    if pd.isnull(datetime_obj):
+                        print(f"日期转换错误: 无法解析日期时间字符串 '{datetime_str}'")
+                        return str(surgery_date)
+                    return datetime_obj.strftime('%Y-%m-%d %H:%M')
+                else:
+                    print(f"无效的时间格式: '{removal_time}'")
+                    # 无效的时间格式，返回日期部分
                     return str(surgery_date)
-                return datetime_obj.strftime('%Y-%m-%d %H:%M')
-            else:
-                print(f"无效的时间格式: '{removal_time}'")
-                # 无效的时间格式，返回日期部分
+            except Exception as e:
+                print(f"日期转换错误: {e}")
                 return str(surgery_date)
-        except Exception as e:
-            print(f"日期转换错误: {e}")
-            return str(surgery_date)
 
-    extracted_df['tissue_dissection_time'] = extracted_df.apply(format_tissue_dissection_time, axis=1)
-    
-    # 重命名 brain_region 列
-    extracted_df.rename(columns={'brain_region': 'brain_region'}, inplace=True)
-    
-    # 删除辅助列
-    extracted_df.drop(columns=['P_number_value', 'T_number_value'], inplace=True)
-    
-    return extracted_df
+        extracted_df['tissue_dissection_time'] = extracted_df.apply(format_tissue_dissection_time, axis=1)
+
+        # 重命名 brain_region 列
+        extracted_df.rename(columns={'brain_region': 'brain_region'}, inplace=True)
+
+        # 删除辅助列
+        extracted_df.drop(columns=['P_number_value', 'T_number_value'], inplace=True)
+
+        return extracted_df
 
 # 3. 添加新列并生成 cell.csv 文件
 def generate_cell_csv(extracted_df,outpath):
