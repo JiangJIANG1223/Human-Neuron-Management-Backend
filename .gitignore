@@ -42,3 +42,4 @@ sample_data.xlsx
 app/database.py
 app/database.py
 /app/__pycache__
+/app/__pycache__
