@@ -45,11 +45,14 @@ import spacy
 
 # Import functions from our modules
 from app.singleColor_somas_imagingInfo_DB import process_single_file_pair as process_single_color_pair
+from app.singleColor_somas_imagingInfo_DB import process_single_file_pair_preview as process_single_file_pair_preview
 from app.multicolor_somas_imagingInfo_DB import process_single_file_pair as process_multi_color_pair
+from app.multicolor_somas_imagingInfo_DB import process_single_file_pair_preview as process_multi_color_pair_preview
 from app.singleColor_cell_table import extract_imaging_and_injection_data as extract_single_color_data
+from app.singleColor_cell_table import extract_imaging_and_injection_data_preview as extract_single_color_data_preview
 from app.singleColor_cell_table import extract_sample_information, generate_cell_csv, process_cell_csv
 from app.multicolor_cell_table import extract_imaging_and_injection_data as extract_multi_color_data
-
+from app.multicolor_cell_table import extract_imaging_and_injection_data_preview as extract_multi_color_data_preview
 app = FastAPI()
 
 app.add_middleware(
@@ -4020,6 +4023,7 @@ async def generate_cell_table(
 ):
     """Generate cell table CSV for specified PTRS"""
     try:
+        print('ptrs:',ptrs)
         if imaging_id == '--':
             dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
         else:
@@ -4036,7 +4040,7 @@ async def generate_cell_table(
             merged_df = extract_multi_color_data(ptrsb=ptrs)
         else:
             merged_df = extract_single_color_data(ptrsb=ptrs)
-
+        print('merged_df1111111:',merged_df)
         # Extract sample info and generate initial CSV
         extracted_df = extract_sample_information(merged_df)
         final_df = generate_cell_csv(extracted_df, output_path=without_cell_id)
@@ -4389,6 +4393,218 @@ async def insert_injection_to_db(sample_preparation_id, db):
         raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
 
     return {"message": "CSV uploaded and stored in the database successfully"}
+
+async def extract_injection_info(sample_preparation_id,db):
+    # 确保目录存在
+    os.makedirs(DB_UPLOAD_DIR, exist_ok=True)
+
+    # 准备保存文件的路径
+    file_path = file_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}.csv"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found at path: {file_path}")
+    # 将文件内容保存到内存中，以便后续操作
+    with open(file_path, 'rb') as file:
+        file_content = file.read()
+
+    # 解析文件名
+    file_name_without_ext = sample_preparation_id
+    pattern = re.match(r"^(P\d{5})-(T\d{3})-(R\d{3})-(S\d{3})(?:-(B\d))?$", file_name_without_ext)
+    if not pattern:
+        raise HTTPException(status_code=400, detail="Invalid file name format. Please check the format and try again.")
+
+    # 提取 P, T, R, S, (B) 部分
+    p_part, t_part, r_part, s_part, b_part = pattern.groups()
+    prefix = f"{p_part}_{t_part}_{r_part}_{s_part}"
+    if b_part:
+        prefix += f"_{b_part}"
+    prefix_pattern = re.compile(rf"^{re.escape(prefix)}_C\d+$")
+
+    try:
+        # 读取 CSV 文件内容并将其转换为 DataFrame
+        df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding='utf-8')
+
+        # 检查 CSV 文件中是否有 ID 列
+        if 'Id' not in df.columns:
+            raise HTTPException(status_code=400, detail="CSV file must contain an ID column.")
+
+        # 检查 ID 列中的所有值是否符合文件名中的格式
+        if not df['Id'].apply(lambda x: bool(prefix_pattern.match(str(x)))).all():
+            raise HTTPException(status_code=400, detail="File name does not match its ID column.")
+
+        # 新增检查 2：C 编号是否有重复
+        c_numbers = df['Id'].apply(lambda x: re.search(r"C\d{5}$", str(x)).group())
+        if c_numbers.duplicated().any():
+            raise HTTPException(status_code=400,
+                                detail="Duplicate C numbers found in ID column. Please check and re-upload.")
+
+        # 检查所有必需列是否存在
+        missing_columns = [col for col in REQUIRED_COLUMNS if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(status_code=400, detail=f"Missing columns: {', '.join(missing_columns)}")
+
+        # 检查必需列的空值（perfusion_time 和 AddingTime 除外）
+        empty_columns = [col for col in REQUIRED_COLUMNS if
+                         col not in ["perfusion_time", "AddingTime"] and df[col].isnull().any()]
+        if empty_columns:
+            raise HTTPException(status_code=400, detail=f"Columns with missing values: {', '.join(empty_columns)}")
+
+        # 从文件名中提取数值
+        p_number = int(p_part[1:])  # 取出 P 部分的数值
+        t_number = int(t_part[1:])  # 取出 T 部分的数值
+
+        # 查询数据库，验证 P 和 T 编号是否存在，只比较数值部分
+        sample_info = db.query(models.Sample_Information).filter(
+            func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,  # 去掉 "P" 并只比较数值
+            func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number  # 去掉 "T" 并只比较数值
+        ).first()
+
+        if not sample_info:
+            raise HTTPException(status_code=400, detail="No matching sample found.")
+
+        # # 新增：检查 dye_name 列是否包含 '-1'
+        # if df['dye_name'].astype(str).str.strip().eq('-1').any():
+        #     raise HTTPException(status_code=400, detail="Abnormal value in dye_name column.")
+
+        # 新增：检查 dye_name 列是否包含数值或数值型字符串
+        def is_numeric(value):
+            try:
+                # 尝试将值转换为浮点数
+                float(str(value).strip())
+                return True
+            except ValueError:
+                return False
+
+        if df['dye_name'].apply(is_numeric).any():
+            raise HTTPException(status_code=400, detail="Abnormal value in dye_name column.")
+
+        # Check concentration columns for integer-only values
+        concentration_columns = ['primaryAntibody_concentration', 'DAPI_concentration']
+        for col in concentration_columns:
+            if not df[col].apply(lambda x: isinstance(x, int) or str(x).isdigit() or str(x) == '-').all():
+                raise HTTPException(status_code=400, detail="Concentration contents error.")
+
+        # 将日期列转换为 datetime 对象
+        date_columns = ['sample_preparation_date', 'perfusion_date']
+        for date_col in date_columns:
+            try:
+                df[date_col] = pd.to_datetime(df[date_col], errors='raise', infer_datetime_format=True)
+            except ValueError as e:
+                raise HTTPException(status_code=400,
+                                    detail=f"Unable to convert date format in column {date_col}: {str(e)}")
+
+        ## 添加 ihc_category 列并根据 dye_name 列设置值
+        # if 'ihc_category' not in df.columns:
+        #     df['ihc_category'] = df['dye_name'].apply(lambda x: 'Lucifer Yellow' if x == 'Lucifer Yellow' else '-')
+        # else:
+        #     df.loc[df['dye_name'] == 'Lucifer Yellow', 'ihc_category'] = 'Lucifer Yellow'
+        #     df.loc[df['dye_name'] != 'Lucifer Yellow', 'ihc_category'] = '-'
+
+        # 修改：处理 ihc_category 列
+        cutoff_date = pd.to_datetime('2024-10-29')
+
+        def process_ihc_category(row):
+            if row['perfusion_date'] <= cutoff_date:
+                # 现有逻辑
+                if row['dye_name'] == 'Lucifer Yellow':
+                    return 'Lucifer Yellow'
+                else:
+                    return '-'
+            else:
+                # 保留原始值，不进行处理
+                return row['ihc_category']
+
+        df['ihc_category'] = df.apply(process_ihc_category, axis=1)
+
+        df['sample_preparation_date'] = df['sample_preparation_date'].dt.strftime('%Y-%m-%d')
+        df['perfusion_date'] = df['perfusion_date'].dt.strftime('%Y-%m-%d')
+
+        # 添加一个新列 file_name 并将所有行的值设置为当前文件名
+        df['file_name'] = sample_preparation_id
+
+        df = df.replace({np.nan: '--'})
+        return df
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
+
+    return {"message": "CSV uploaded and stored in the database successfully"}
+
+async def process_imaging_data_preview(
+        sample_preparation_id: str = Form(...),
+        imaging_id: str = Form(...),
+        is_multicolor: bool = Form(False),
+        db: Session = Depends(get_db),
+):
+    """Process APO and metadata files and insert into imaging_information table"""
+    # 构建目录路径
+    if imaging_id == '--':
+        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+    else:
+        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+
+    # 检查目录是否存在
+    if not os.path.exists(dir_path):
+        raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
+
+    # 查找.apo文件
+    apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
+    if not apo_files:
+        raise HTTPException(status_code=404, detail=f"未找到.apo文件在目录: {dir_path}")
+    apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+
+    # 查找元数据文件(.xml或.xlsx)
+    metadata_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path)
+                      if f.endswith('.xml') or f.endswith('.xlsx')]
+    if not metadata_files:
+        raise HTTPException(status_code=404, detail=f"未找到元数据文件(.xml或.xlsx)在目录: {dir_path}")
+    metadata_path = metadata_files[0]  # 取第一个匹配的元数据文件
+
+    try:
+        # 根据is_multicolor标志选择不同的处理函数
+        if is_multicolor:
+            imaging_df = process_multi_color_pair_preview(apo_path, metadata_path)
+        else:
+            imaging_df = process_single_file_pair_preview(apo_path, metadata_path)
+
+        print('process_imaging_data_preview:',imaging_df)
+        return imaging_df
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理文件时出错: {str(e)}")
+
+async def generate_cell_table_preview(
+        sample_preparation_id: str = Form(...),
+        imaging_id: str = Form(...),
+        imaging_df: pd.DataFrame = Form(...),
+        injection_df: pd.DataFrame = Form(...),
+        is_multicolor: bool = Query(False, description="是否多色"),
+):
+    """Generate cell table CSV for specified PTRS"""
+    try:
+        if imaging_id == '--':
+            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        else:
+            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+
+        # Create temp file paths
+        temp_dir = dir_path
+        os.makedirs(temp_dir, exist_ok=True)
+        without_cell_id = os.path.join(temp_dir, f"cell_without_cellID.csv")
+        # with_cell_id = os.path.join(temp_dir, f"cell_with_cellID.csv")
+
+        # Extract data based on type
+        if is_multicolor:
+            merged_df = extract_multi_color_data_preview(imaging_df, injection_df)
+        else:
+            merged_df = extract_single_color_data_preview(imaging_df, injection_df)
+        print('merged_df1111111:',merged_df)
+        # Extract sample info and generate initial CSV
+        extracted_df = extract_sample_information(merged_df)
+        final_df = generate_cell_csv(extracted_df, output_path=without_cell_id)
+
+        return without_cell_id
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 @app.post("/api/preview_insert_sql/")
 async def preview_insert_sql(
         is_multicolor: bool = Form(False),
@@ -4408,7 +4624,7 @@ async def preview_insert_sql(
         if not os.path.exists(dir_path):
             raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
 
-        await insert_injection_to_db(sample_preparation_id,db)
+        injection_df = await extract_injection_info(sample_preparation_id,db)
 
         # 查找.apo文件
         apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
@@ -4418,23 +4634,19 @@ async def preview_insert_sql(
 
 
         # Step 2: Process imaging data
-        imaging_result = await process_imaging_data(sample_preparation_id, imaging_id, is_multicolor, db)
+        imaging_df = await process_imaging_data_preview(sample_preparation_id, imaging_id, is_multicolor, db)
 
-        # Step 3: Update PTRS(B) columns
-        ptrs_result = await update_ptrs(db)
-
-        # Extract PTRS from filename
-        apo_filename = os.path.basename(apo_path)
-        ptrs_match = re.search(r'(P\d+-T\d+-R\d+-S\d+(?:-B\d+)?)', apo_filename)
-        if not ptrs_match:
-            raise HTTPException(status_code=400, detail="无法从文件名提取PTRS(B)")
-        ptrs = ptrs_match.group(1)
+        # # Step 3: Update PTRS(B) columns
+        # ptrs_result = await update_ptrs(db)
+        imaging_df['PTRS(B)'] = sample_preparation_id
+        injection_df['PTRS(B)'] = sample_preparation_id
 
         # Step 4: Generate cell table
-        file_path = await generate_cell_table(
+        file_path = await generate_cell_table_preview(
             sample_preparation_id = sample_preparation_id,
             imaging_id = imaging_id,
-            ptrs=ptrs,
+            imaging_df=imaging_df,
+            injection_df=injection_df,
             is_multicolor=is_multicolor,
         )
 

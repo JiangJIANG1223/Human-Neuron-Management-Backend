@@ -365,7 +365,46 @@ def insert_to_db(apo_data, imaging_info, apo_file, imaging_file):
     #     print(f"重命名元数据文件：{imaging_file} -> {new_imaging_file}")
     # except Exception as e:
     #     print(f"重命名文件时出错：{e}")
+def insert_to_df(apo_data, imaging_info, apo_file, imaging_file):
+    # Extract file basenames
+    apo_file_basename = os.path.basename(apo_file)
+    imaging_file_basename = os.path.basename(imaging_file)
 
+    # Create rows for DataFrame
+    rows_list = []
+    for index, apo in apo_data.iterrows():
+        data_row = {
+            'ID': apo['ID'],  # ID 默认为 '--'
+            'imaging_device': imaging_info.imaging_device,
+            'laser_wavelength': imaging_info.laser_wavelength,
+            'laser_power': imaging_info.laser_power,
+            'laser_power_ratio': imaging_info.laser_power_ratio,
+            'gain': imaging_info.gain,
+            'scanner': imaging_info.scanner,
+            'averaging': imaging_info.averaging,
+            'pmt_voltage': imaging_info.pmt_voltage,
+            'z_size': imaging_info.z_size,
+            'tiling': imaging_info.tiling,
+            'overlap': imaging_info.overlap,
+            'xy_resolution': imaging_info.xy_resolution,
+            'z_resolution': imaging_info.z_resolution,
+            'document_name': imaging_info.document_name,
+            'image_size': imaging_info.image_size,
+            'shooting_date': imaging_info.shooting_date,
+            'shooting_staff': imaging_info.shooting_staff,
+            'soma_x': apo['soma_x'],
+            'soma_y': apo['soma_y'],
+            'soma_z': apo['soma_z'],
+            'apo_file': apo_file_basename,
+            'metadata_file': imaging_file_basename
+        }
+        rows_list.append(data_row)
+
+    # Create new DataFrame or append to existing one
+    new_df = pd.DataFrame(rows_list)
+    print('new_df:', new_df['ID'])
+    print(f"成功添加到DataFrame：{apo_file_basename} 和 {imaging_file_basename}")
+    return new_df
 def extract_identifier(filename):
     """
     从文件名中提取用于匹配的编号部分，例如：
@@ -409,7 +448,7 @@ def process_single_file_pair(apo_file_path, metadata_file_path):
 
         # 读取元数据信息
         imaging_info = ImagingInfo(metadata_file_path)
-
+        print('imaging_info_db: ', imaging_info.__dict__)
         # 插入数据到数据库
         insert_to_db(apo_data, imaging_info, apo_file_path, metadata_file_path)
 
@@ -419,6 +458,32 @@ def process_single_file_pair(apo_file_path, metadata_file_path):
             "apo_file": apo_file_basename,
             "metadata_file": metadata_file_basename
         }
+    except Exception as e:
+        return {"status": "error", "message": f"处理错误: {str(e)}"}
+
+def process_single_file_pair_preview(apo_file_path, metadata_file_path):
+    try:
+        # 检查文件是否存在
+        if not os.path.exists(apo_file_path) or not os.path.exists(metadata_file_path):
+            missing = []
+            if not os.path.exists(apo_file_path): missing.append("APO文件")
+            if not os.path.exists(metadata_file_path): missing.append("元数据文件")
+            return {"status": "error", "message": f"文件不存在: {', '.join(missing)}"}
+
+        # 获取文件基本名
+        apo_file_basename = os.path.basename(apo_file_path)
+        metadata_file_basename = os.path.basename(metadata_file_path)
+        # 读取并处理文件
+        apo_data = read_apo(apo_file_path)
+        apo_data = filter_apo(apo_data)
+
+        # 读取元数据信息
+        imaging_info = ImagingInfo(metadata_file_path)
+        print('imaging_info:', imaging_info.__dict__)
+        # 插入数据到数据库
+        imaging_df = insert_to_df(apo_data, imaging_info, apo_file_path, metadata_file_path)
+
+        return imaging_df
     except Exception as e:
         return {"status": "error", "message": f"处理错误: {str(e)}"}
 if __name__ == "__main__":

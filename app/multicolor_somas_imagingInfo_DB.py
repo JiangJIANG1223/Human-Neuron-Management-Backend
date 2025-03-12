@@ -323,6 +323,48 @@ def insert_to_db(apo_data, imaging_info, apo_file, imaging_file):
     # except Exception as e:
     #     print(f"重命名文件时出错：{e}")
 
+
+def insert_to_df(apo_data, imaging_info, apo_file, imaging_file):
+    # Extract file basenames
+    apo_file_basename = os.path.basename(apo_file)
+    imaging_file_basename = os.path.basename(imaging_file)
+
+    # Create rows for DataFrame
+    rows_list = []
+    for index, apo in apo_data.iterrows():
+        data_row = {
+            'ID': apo['ID'],  # ID 默认为 '--'
+            'imaging_device': imaging_info.imaging_device,
+            'laser_wavelength': imaging_info.laser_wavelength,
+            'laser_power': imaging_info.laser_power,
+            'laser_power_ratio': imaging_info.laser_power_ratio,
+            'gain': imaging_info.gain,
+            'scanner': imaging_info.scanner,
+            'averaging': imaging_info.averaging,
+            'pmt_voltage': imaging_info.pmt_voltage,
+            'z_size': imaging_info.z_size,
+            'tiling': imaging_info.tiling,
+            'overlap': imaging_info.overlap,
+            'xy_resolution': imaging_info.xy_resolution,
+            'z_resolution': imaging_info.z_resolution,
+            'document_name': imaging_info.document_name,
+            'image_size': imaging_info.image_size,
+            'shooting_date': imaging_info.shooting_date,
+            'shooting_staff': imaging_info.shooting_staff,
+            'soma_x': apo['soma_x'],
+            'soma_y': apo['soma_y'],
+            'soma_z': apo['soma_z'],
+            'apo_file': apo_file_basename,
+            'metadata_file': imaging_file_basename
+        }
+        rows_list.append(data_row)
+
+    # Create new DataFrame or append to existing one
+    new_df = pd.DataFrame(rows_list)
+    print('new_df: ', new_df['ID'].values)
+    print(f"成功添加到DataFrame：{apo_file_basename} 和 {imaging_file_basename}")
+    return new_df
+
 def extract_identifier(filename):
     """
     从文件名中提取用于匹配的编号部分，例如：
@@ -367,7 +409,7 @@ def process_single_file_pair(apo_file_path, metadata_file_path):
 
         # Read metadata
         imaging_info = ImagingInfo(metadata_file_path)
-
+        print('imaging_info_db: ', imaging_info.__dict__)
         # Insert data to database
         insert_to_db(apo_data, imaging_info, apo_file_path, metadata_file_path)
 
@@ -377,6 +419,45 @@ def process_single_file_pair(apo_file_path, metadata_file_path):
             "apo_file": apo_file_basename,
             "metadata_file": metadata_file_basename
         }
+    except Exception as e:
+        return {"status": "error", "message": f"处理错误: {str(e)}"}
+
+def process_single_file_pair_preview(apo_file_path, metadata_file_path):
+    """
+    Process a single apo file and metadata file pair
+
+    Parameters:
+        apo_file_path: Path to the .apo file
+        metadata_file_path: Path to the metadata file (.xlsx or .xml)
+
+    Returns:
+        Dictionary with status and processing information
+    """
+    try:
+        # Check if files exist
+        if not os.path.exists(apo_file_path) or not os.path.exists(metadata_file_path):
+            missing = []
+            if not os.path.exists(apo_file_path): missing.append("APO文件")
+            if not os.path.exists(metadata_file_path): missing.append("元数据文件")
+            return {"status": "error", "message": f"文件不存在: {', '.join(missing)}"}
+
+        # Get file basenames
+        apo_file_basename = os.path.basename(apo_file_path)
+        metadata_file_basename = os.path.basename(metadata_file_path)
+
+        # Check if already processed
+        if '_DB' in apo_file_basename or '_DB' in metadata_file_basename:
+            return {"status": "skipped", "message": f"文件已处理过: {apo_file_basename} 和 {metadata_file_basename}"}
+
+        # Read and process files
+        apo_data = read_apo(apo_file_path)
+        apo_data = filter_apo(apo_data)
+
+        # Read metadata
+        imaging_info = ImagingInfo(metadata_file_path)
+        print('imaging_info: ', imaging_info.__dict__)
+        imaging_df = insert_to_df(apo_data, imaging_info, apo_file_path, metadata_file_path)
+        return imaging_df
     except Exception as e:
         return {"status": "error", "message": f"处理错误: {str(e)}"}
 # 保留原批量处理功能但改为调用单文件处理函数

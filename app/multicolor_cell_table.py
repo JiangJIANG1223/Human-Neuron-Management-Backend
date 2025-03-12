@@ -124,6 +124,124 @@ def extract_imaging_and_injection_data(ptrsb):
 
         return merged_df
 
+
+def extract_imaging_columns(df):
+    """
+    Extract and process specific imaging information columns from DataFrame
+
+    Parameters:
+        df: Input DataFrame containing imaging information
+
+    Returns:
+        DataFrame with only the specified imaging columns and renamed columns
+    """
+    # Create a copy of the DataFrame with selected columns
+    # Rename idx and ID columns
+    # if isinstance(df, dict):
+    #     # 如果是包含标量值的字典，创建单行DataFrame
+    #     df = pd.DataFrame([df])
+    # elif not isinstance(df, pd.DataFrame):
+    #     # 确保是DataFrame类型
+    #     df = pd.DataFrame(df)
+    result_df = df.rename(columns={'idx': 'imaging_idx', 'ID': 'injection_ID'})
+
+    # List of columns to keep
+    columns = [
+        'imaging_idx', 'PTRS(B)', 'injection_ID', 'metadata_file', 'apo_file',
+        'imaging_device', 'laser_wavelength', 'laser_power', 'laser_power_ratio',
+        'gain', 'scanner', 'averaging', 'pmt_voltage', 'z_size', 'tiling',
+        'overlap', 'xy_resolution', 'z_resolution', 'document_name', 'image_size',
+        'shooting_date', 'shooting_staff', 'soma_x', 'soma_y', 'soma_z'
+    ]
+
+    # Filter to only include columns that exist in the DataFrame
+    existing_columns = [col for col in columns if col in result_df.columns]
+    result_df = result_df[existing_columns].copy()
+
+    # Add any missing columns with default values
+    missing_columns = set(columns) - set(existing_columns)
+    for col in missing_columns:
+        result_df[col] = ''
+
+    return result_df
+def extract_injection_columns(df):
+    """
+    Extract and process specific imaging information columns from DataFrame
+
+    Parameters:
+        df: Input DataFrame containing imaging information
+
+    Returns:
+        DataFrame with only the specified imaging columns and renamed columns
+    """
+    # Create a copy of the DataFrame with selected columns
+    # Rename idx and ID columns
+    # if isinstance(df, dict):
+    #     # 如果是包含标量值的字典，创建单行DataFrame
+    #     df = pd.DataFrame([df])
+    # elif not isinstance(df, pd.DataFrame):
+    #     # 确保是DataFrame类型
+    #     df = pd.DataFrame(df)
+
+    result_df = df.rename(columns={'file_name': 'injection_file', 'perfusion_user': 'perfusion_staff'})
+
+    # List of columns to keep
+    columns = [
+        'PTRS(B)', 'injection_file', 'sample_preparation_date', 'sample_preparation_staff',
+        'fresh_perfusion', 'slice_thickness','dye_name','experiment_temperature', 'perfusion_staff','ihc_category',
+        'immunohistochemistry', 'primaryAntibody_concentration', 'secondAntibody_band', 'DAPI_concentration'
+    ]
+
+    # Filter to only include columns that exist in the DataFrame
+    existing_columns = [col for col in columns if col in result_df.columns]
+    result_df = result_df[existing_columns].copy()
+
+    # Add any missing columns with default values
+    missing_columns = set(columns) - set(existing_columns)
+    for col in missing_columns:
+        result_df[col] = ''
+
+    return result_df
+def extract_imaging_and_injection_data_preview(imaging_df_pre,injection_df_pre):
+    # 确保 'PTRS(B)' 列的数据类型一致
+    imaging_df = extract_imaging_columns(imaging_df_pre)
+    injection_df = extract_injection_columns(injection_df_pre)
+    imaging_df['PTRS(B)'] = imaging_df['PTRS(B)'].astype(str)
+    injection_df['PTRS(B)'] = injection_df['PTRS(B)'].astype(str)
+
+    # 检查 injection_df 中相同 PTRS(B) 的注射信息是否一致
+    # 去除 'PTRS(B)' 列和 'injection_file' 列，用于比较
+    injection_info_columns = injection_df.columns.difference(['PTRS(B)', 'injection_file'])
+    inconsistent_injections = injection_df.groupby('PTRS(B)')[injection_info_columns.tolist()].nunique()
+    inconsistent_ptrs = inconsistent_injections[(inconsistent_injections > 1).any(axis=1)].index.tolist()
+
+    if inconsistent_ptrs:
+        print("警告：以下 PTRS(B) 存在不一致的灌注信息：")
+        # 对每个存在不一致的 PTRS(B)，找出具体不一致的列
+        for ptrs_b in inconsistent_ptrs:
+            cols = inconsistent_injections.loc[ptrs_b]
+            inconsistent_cols = cols[cols > 1].index.tolist()
+            print(f"PTRS(B): {ptrs_b}, 不一致的列: {inconsistent_cols}")
+        # 根据需求处理不一致的数据，例如抛出异常或手动处理
+        # 在此示例中，我们选择抛出异常
+        raise ValueError(f"灌注信息不一致，无法合并。请检查 PTRS(B)：{inconsistent_ptrs}")
+
+    else:
+        # 灌注信息一致，可以安全地去重
+        injection_df_unique = injection_df.drop_duplicates(subset='PTRS(B)')
+
+    # 以 imaging_df 为基准，基于 PTRS(B) 列合并
+    merged_df = pd.merge(imaging_df, injection_df_unique, on='PTRS(B)', how='left')
+
+    # 检查是否有未匹配的记录
+    unmatched_ptrs_b = imaging_df[~imaging_df['PTRS(B)'].isin(injection_df_unique['PTRS(B)'])]['PTRS(B)'].unique()
+    if len(unmatched_ptrs_b) > 0:
+        print("警告：以下 PTRS(B) 在 injection_df 中未找到匹配的记录：")
+        print(unmatched_ptrs_b)
+
+    return merged_df
+
+
 # 2. 从 sample_information_20240815 中提取 brain_region 和 tissue_dissection_time
 def extract_sample_information(merged_df):
     with engine.connect() as connection:
