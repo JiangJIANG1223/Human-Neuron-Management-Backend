@@ -42,6 +42,8 @@ import redis
 import openai
 import parsedatetime
 import spacy
+from v3dpy.loaders import Raw
+raw = Raw()
 
 # Import functions from our modules
 from app.singleColor_somas_imagingInfo_DB import process_single_file_pair as process_single_color_pair
@@ -2717,6 +2719,65 @@ async def upload_injection_file(
 
     return response_data
 
+
+imgdir = '/home/ub2/PB/BRAINTELL/Projects/HumanNeurons/AllBrainSlices/PTRSB_DB'
+# imgdir = '/Users/majortom/PyCharmProj/PTRSB_DB'
+def soma_coord_transfer(apo_path,imgdir=imgdir,img_block_half_size=700):
+    outdf=pd.DataFrame()
+    if not os.path.exists(apo_path):
+        print('cannot find apo file')
+        return outdf
+    anns_fname=os.path.split(apo_path)[-1]
+    ptrsbn=anns_fname.split('.')[0]
+    # check if image exist
+    ptrsid = ptrsbn
+    docid_split = ptrsbn.split('-')
+    if len(docid_split) == 5:
+        if not docid_split[-1].startswith('B'):
+            ptrsid = ptrsbn[0:-1 * (len(docid_split[4]) + 1)]
+    elif len(docid_split) == 6:
+        ptrsid = ptrsbn[0:-1 * (len(docid_split[5]) + 1)]
+    this_somas=pd.read_csv(apo_path)
+    if not this_somas.shape[0]:
+        print('No soma in ',anns_fname)
+        return outdf
+
+    # read image (8bit v3draw)
+    imgpath=os.path.join(imgdir,ptrsid,ptrsbn+'_8bit.v3draw')
+    if ptrsbn == 'P00067-T001-R001-S014-B2':
+        imgpath=os.path.join(imgdir,'P00067-T001-R001-S014-B1','P00067-T001-R001-S014-B1_8bit.v3draw')
+    if ptrsbn in ['P00115-T001-R002-S024-B2','P00115-T001-R002-S024-B4']:
+        imgpath = os.path.join(imgdir, 'P00115-T001-R002-S024-B1', 'P00115-T001-R002-S024-B1_8bit.v3draw')
+    if not os.path.exists(imgpath):
+        print('No image data of ',ptrsbn)
+        return outdf
+    # start to crop
+    img=raw.load(imgpath)
+    img_c = img.shape[0] # channels
+    img_z = img.shape[1] # z-sclies
+    img_y = img.shape[2] # y
+    img_x = img.shape[3] # x
+    i=0
+    # print(img_c,img_x,img_y,img_z)
+    for s in this_somas.index:
+        i+=1
+        sx = int(float(this_somas.loc[s, 'x']))
+        sy = int(float(this_somas.loc[s, 'y']))
+        sz = int(float(this_somas.loc[s, 'z']))
+        # get new coordinates
+        x_start=max(sx-img_block_half_size,0)
+        x_end = min(sx + img_block_half_size+1,img_x)
+        y_start=max(sy-img_block_half_size,0)
+        y_end = min(sy + img_block_half_size+1,img_y)
+        if x_start >= x_end or y_start >= y_end:
+            outdf=pd.DataFrame()
+            return outdf
+        newsx = sx - x_start
+        newsy = sy - y_start
+        outdf.loc[ptrsbn+'_'+str(i),'x']=newsx
+        outdf.loc[ptrsbn+'_'+str(i),'y']=newsy
+    return outdf
+
 @app.post("/api/upload_imaging_annotation_file/{sample_preparation_id}/{imaging_id}")
 async def upload_imaging_annotation_file(
     annotation_file: UploadFile = File(...),
@@ -2836,20 +2897,41 @@ async def upload_imaging_annotation_file(
             folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
         os.makedirs(folder, exist_ok=True)
 
-        file_path = os.path.join(folder, file.filename)
+        # file_path = os.path.join(folder, file.filename)
+        file_name = file.filename
+        file_path = os.path.join(folder, file_name)
+        contents = await annotation_file.read()
+        with open(file_path, "wb") as f:
+            f.write(contents)
 
-        # Uncomment if you need to prevent overwriting existing files:
-        # if os.path.exists(file_path):
-        #     raise HTTPException(
-        #         status_code=400,
-        #         detail=f"'{file.filename}' already exists. Please check."
-        #     )
-
-        # Save the file
-        with open(file_path, "wb+") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        file_stem, file_ext = os.path.splitext(file_name)
+        initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
+        shutil.copy(file_path, initial_file_path)
 
         uploaded_files.append(file.filename)
+        ## Transfer soma coordinates
+        try:
+            df_transformed = soma_coord_transfer(file_path, imgdir)
+
+            if not df_transformed.empty:
+                print(f"Transferred soma coordinates: ", df_transformed)
+                # Read the original file as CSV
+                annotation_df = pd.read_csv(file_path)
+
+                # Update the soma_x and soma_y values in the annotation file
+                i = 0
+                for idx, row in df_transformed.iterrows():
+                    i += 1
+                    if i <= len(annotation_df):
+                        annotation_df.loc[i - 1, 'x'] = row['x']
+                        annotation_df.loc[i - 1, 'y'] = row['y']
+
+                # Save the updated file with the original filename
+                annotation_df.to_csv(file_path, index=False)
+        except Exception as e:
+            print(f"Error in soma coordinate transfer: {str(e)}")
+            # If transformation fails, restore the original file
+            # shutil.copy(initial_file_path, file_path)
 
     except HTTPException as e:
         # Return partial information about already uploaded files
@@ -3944,10 +4026,8 @@ async def process_imaging_data(
         raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
 
     # 查找.apo文件
-    apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
-    if not apo_files:
-        raise HTTPException(status_code=404, detail=f"未找到.apo文件在目录: {dir_path}")
-    apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+    apo_file = os.path.join(dir_path,sample_preparation_id+'.apo')
+    apo_path = apo_file  # 取第一个匹配的.apo文件
 
     # 查找元数据文件(.xml或.xlsx)
     metadata_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path)
@@ -4073,11 +4153,12 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
         await insert_injection_to_db(sample_preparation_id,db)
 
         # 查找.apo文件
-        apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
-        if not apo_files:
-            raise HTTPException(status_code=404, detail=f"在目录 {dir_path} 中找不到.apo文件")
-        apo_path = apo_files[0]  # 取第一个匹配的.apo文件
-
+        # apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
+        # if not apo_files:
+        #     raise HTTPException(status_code=404, detail=f"在目录 {dir_path} 中找不到.apo文件")
+        # apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+        apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+        apo_path = apo_file  # 取第一个匹配的.apo文件
 
         # Step 2: Process imaging data
         imaging_result = await process_imaging_data(sample_preparation_id, imaging_id, is_multicolor, db)
@@ -4207,9 +4288,9 @@ async def import_cell_table(
             marker_files.append(out_filename)
 
         # 将数据插入到 human_singlecell_trackingtable_20240712 表中
-        df['soma_x'] = '--'
-        df['soma_y'] = '--'
-        df['soma_z'] = '--'
+        # df['soma_x'] = '--'
+        # df['soma_y'] = '--'
+        # df['soma_z'] = '--'
         df = df.replace({np.nan: '--'})
 
         # 获取数据库表
@@ -4548,10 +4629,12 @@ async def process_imaging_data_preview(
         raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
 
     # 查找.apo文件
-    apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
-    if not apo_files:
-        raise HTTPException(status_code=404, detail=f"未找到.apo文件在目录: {dir_path}")
-    apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+    # apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
+    # if not apo_files:
+    #     raise HTTPException(status_code=404, detail=f"未找到.apo文件在目录: {dir_path}")
+    # apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+    apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+    apo_path = apo_file  # 取第一个匹配的.apo文件
 
     # 查找元数据文件(.xml或.xlsx)
     metadata_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path)
@@ -4627,11 +4710,12 @@ async def preview_insert_sql(
         injection_df = await extract_injection_info(sample_preparation_id,db)
 
         # 查找.apo文件
-        apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
-        if not apo_files:
-            raise HTTPException(status_code=404, detail=f"在目录 {dir_path} 中找不到.apo文件")
-        apo_path = apo_files[0]  # 取第一个匹配的.apo文件
-
+        # apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
+        # if not apo_files:
+        #     raise HTTPException(status_code=404, detail=f"在目录 {dir_path} 中找不到.apo文件")
+        # apo_path = apo_files[0]  # 取第一个匹配的.apo文件
+        apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+        apo_path = apo_file  # 取第一个匹配的.apo文件
 
         # Step 2: Process imaging data
         imaging_df = await process_imaging_data_preview(sample_preparation_id, imaging_id, is_multicolor, db)
