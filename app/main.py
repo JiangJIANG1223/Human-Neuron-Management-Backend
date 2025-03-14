@@ -4214,6 +4214,28 @@ async def import_cell_table(
 
     # Read the CSV into a DataFrame
     final_df = pd.read_csv(without_cell_id)
+    apo_file = os.path.join(temp_dir, sample_preparation_id + '.apo')
+    apo_path = apo_file  # 取第一个匹配的.apo文件
+    try:
+        # Read the APO file and get row count
+        if os.path.exists(apo_path):
+            apo_df = pd.read_csv(apo_path)
+            apo_row_count = len(apo_df)
+
+            cell_table_row_count = len(final_df)
+
+            # Compare row counts
+            if apo_row_count != cell_table_row_count:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"入库细胞数量与apo记录数量不一致！APO文件有 {apo_row_count} 行，而生成的单细胞表有 {cell_table_row_count} 行。"
+                )
+            else:
+                print(f"数据行数校验通过: APO文件与单细胞表均有 {apo_row_count} 行")
+        else:
+            raise HTTPException(status_code=404, detail=f"找不到APO文件: {apo_path}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"行数验证过程出错: {str(e)}")
 
     # Get the current maximum Cell ID from the database and add 1
     result = db.execute(text("SELECT MAX(`Cell ID`) FROM human_singlecell_trackingtable_20240712")).fetchone()
@@ -4734,6 +4756,28 @@ async def preview_insert_sql(
             injection_df=injection_df,
             is_multicolor=is_multicolor,
         )
+        try:
+            # Read the APO file and get row count
+            if os.path.exists(apo_path):
+                apo_df = pd.read_csv(apo_path)
+                apo_row_count = len(apo_df)
+
+                # Read the generated cell table file and get row count
+                cell_table_df = pd.read_csv(file_path)
+                cell_table_row_count = len(cell_table_df)
+
+                # Compare row counts
+                if apo_row_count != cell_table_row_count:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"入库细胞数量与apo记录数量不一致！APO文件有 {apo_row_count} 行，而生成的单细胞表有 {cell_table_row_count} 行。"
+                    )
+                else:
+                    print(f"数据行数校验通过: APO文件与单细胞表均有 {apo_row_count} 行")
+            else:
+                raise HTTPException(status_code=404, detail=f"找不到APO文件: {apo_path}")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"行数验证过程出错: {str(e)}")
 
         if os.path.exists(file_path):
             filename = os.path.basename(file_path)
