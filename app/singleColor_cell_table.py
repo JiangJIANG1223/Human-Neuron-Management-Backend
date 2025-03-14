@@ -280,14 +280,14 @@ def extract_sample_information(merged_df):
         # 为 sample_df 添加 P_number_value 和 T_number_value 列，提取数值部分
         sample_df['P_number_value'] = sample_df['病人编号'].apply(lambda x: extract_number(x, 'P'))
         sample_df['T_number_value'] = sample_df['组织编号'].apply(lambda x: extract_number(x, 'T'))
-
+        sample_df = sample_df.drop_duplicates(['P_number_value', 'T_number_value'])
         # 为 merged_df 添加 P_number_value 和 T_number_value 列，提取数值部分
         # 修改分隔符为 '_'
         merged_df['P_number_value'] = merged_df['PTRS(B)'].apply(lambda x: extract_number(x.split('-')[0], 'P'))
         merged_df['T_number_value'] = merged_df['PTRS(B)'].apply(
             lambda x: extract_number(x.split('-')[1], 'T') if len(x.split('-')) > 1 else None
         )
-
+        print('merged_df: ', merged_df)
         # 使用数值部分进行合并
         extracted_df = pd.merge(merged_df, sample_df, on=['P_number_value', 'T_number_value'], how='left')
         print('extracted_df: ', extracted_df)

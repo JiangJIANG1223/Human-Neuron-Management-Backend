@@ -4538,7 +4538,7 @@ async def extract_injection_info(sample_preparation_id,db):
             func.cast(func.substr(models.Sample_Information.patient_number, 2), Integer) == p_number,  # 去掉 "P" 并只比较数值
             func.cast(func.substr(models.Sample_Information.tissue_id, 2), Integer) == t_number  # 去掉 "T" 并只比较数值
         ).first()
-
+        print('sample_info:',sample_info)
         if not sample_info:
             raise HTTPException(status_code=400, detail="No matching sample found.")
 
@@ -4603,6 +4603,7 @@ async def extract_injection_info(sample_preparation_id,db):
         df['file_name'] = sample_preparation_id
 
         df = df.replace({np.nan: '--'})
+        print('injection df',df)
         return df
     except HTTPException as http_exc:
         raise http_exc
