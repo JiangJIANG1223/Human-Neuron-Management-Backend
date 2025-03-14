@@ -4026,7 +4026,10 @@ async def process_imaging_data(
         raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
 
     # 查找.apo文件
-    apo_file = os.path.join(dir_path,sample_preparation_id+'.apo')
+    if imaging_id == '--':
+        apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+    else:
+        apo_file = os.path.join(dir_path, sample_preparation_id + '-' + imaging_id + '.apo')
     apo_path = apo_file  # 取第一个匹配的.apo文件
 
     # 查找元数据文件(.xml或.xlsx)
@@ -4157,7 +4160,10 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
         # if not apo_files:
         #     raise HTTPException(status_code=404, detail=f"在目录 {dir_path} 中找不到.apo文件")
         # apo_path = apo_files[0]  # 取第一个匹配的.apo文件
-        apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+        if imaging_id == '--':
+            apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+        else:
+            apo_file = os.path.join(dir_path, sample_preparation_id + '-' + imaging_id + '.apo')
         apo_path = apo_file  # 取第一个匹配的.apo文件
 
         # Step 2: Process imaging data
@@ -4214,7 +4220,10 @@ async def import_cell_table(
 
     # Read the CSV into a DataFrame
     final_df = pd.read_csv(without_cell_id)
-    apo_file = os.path.join(temp_dir, sample_preparation_id + '.apo')
+    if imaging_id == '--':
+        apo_file = os.path.join(temp_dir, sample_preparation_id + '.apo')
+    else:
+        apo_file = os.path.join(temp_dir, sample_preparation_id + '-' + imaging_id + '.apo')
     apo_path = apo_file  # 取第一个匹配的.apo文件
     try:
         # Read the APO file and get row count
@@ -4656,7 +4665,10 @@ async def process_imaging_data_preview(
     # if not apo_files:
     #     raise HTTPException(status_code=404, detail=f"未找到.apo文件在目录: {dir_path}")
     # apo_path = apo_files[0]  # 取第一个匹配的.apo文件
-    apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+    if imaging_id == '--':
+        apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+    else:
+        apo_file = os.path.join(dir_path, sample_preparation_id +'-'+imaging_id + '.apo')
     apo_path = apo_file  # 取第一个匹配的.apo文件
 
     # 查找元数据文件(.xml或.xlsx)
@@ -4737,7 +4749,10 @@ async def preview_insert_sql(
         # if not apo_files:
         #     raise HTTPException(status_code=404, detail=f"在目录 {dir_path} 中找不到.apo文件")
         # apo_path = apo_files[0]  # 取第一个匹配的.apo文件
-        apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+        if imaging_id == '--':
+            apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
+        else:
+            apo_file = os.path.join(dir_path, sample_preparation_id + '-' + imaging_id + '.apo')
         apo_path = apo_file  # 取第一个匹配的.apo文件
 
         # Step 2: Process imaging data
