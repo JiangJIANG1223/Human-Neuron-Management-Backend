@@ -2720,8 +2720,9 @@ async def upload_injection_file(
     return response_data
 
 
-imgdir = '/home/ub2/PB/BRAINTELL/Projects/HumanNeurons/AllBrainSlices/PTRSB_DB'
+imgdir = '/PB/BRAINTELL/Projects/HumanNeurons/AllBrainSlices/PTRSB_DB'
 # imgdir = '/Users/majortom/PyCharmProj/PTRSB_DB'
+# imgdir = '/Users/wanglijun/PycharmProjects/PTRSB_DB'
 def soma_coord_transfer(apo_path,imgdir=imgdir,img_block_half_size=700):
     outdf=pd.DataFrame()
     if not os.path.exists(apo_path):
@@ -2904,34 +2905,34 @@ async def upload_imaging_annotation_file(
         with open(file_path, "wb") as f:
             f.write(contents)
 
-        file_stem, file_ext = os.path.splitext(file_name)
-        initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
-        shutil.copy(file_path, initial_file_path)
+        # file_stem, file_ext = os.path.splitext(file_name)
+        # initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
+        # shutil.copy(file_path, initial_file_path)
 
         uploaded_files.append(file.filename)
         ## Transfer soma coordinates
-        try:
-            df_transformed = soma_coord_transfer(file_path, imgdir)
-
-            if not df_transformed.empty:
-                print(f"Transferred soma coordinates: ", df_transformed)
-                # Read the original file as CSV
-                annotation_df = pd.read_csv(file_path)
-
-                # Update the soma_x and soma_y values in the annotation file
-                i = 0
-                for idx, row in df_transformed.iterrows():
-                    i += 1
-                    if i <= len(annotation_df):
-                        annotation_df.loc[i - 1, 'x'] = row['x']
-                        annotation_df.loc[i - 1, 'y'] = row['y']
-
-                # Save the updated file with the original filename
-                annotation_df.to_csv(file_path, index=False)
-        except Exception as e:
-            print(f"Error in soma coordinate transfer: {str(e)}")
-            # If transformation fails, restore the original file
-            # shutil.copy(initial_file_path, file_path)
+        # try:
+        #     df_transformed = soma_coord_transfer(file_path, imgdir)
+        #
+        #     if not df_transformed.empty:
+        #         print(f"Transferred soma coordinates: ", df_transformed)
+        #         # Read the original file as CSV
+        #         annotation_df = pd.read_csv(file_path)
+        #
+        #         # Update the soma_x and soma_y values in the annotation file
+        #         i = 0
+        #         for idx, row in df_transformed.iterrows():
+        #             i += 1
+        #             if i <= len(annotation_df):
+        #                 annotation_df.loc[i - 1, 'x'] = row['x']
+        #                 annotation_df.loc[i - 1, 'y'] = row['y']
+        #
+        #         # Save the updated file with the original filename
+        #         annotation_df.to_csv(file_path, index=False)
+        # except Exception as e:
+        #     print(f"Error in soma coordinate transfer: {str(e)}")
+        #     # If transformation fails, restore the original file
+        #     # shutil.copy(initial_file_path, file_path)
 
     except HTTPException as e:
         # Return partial information about already uploaded files
@@ -4166,6 +4167,53 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
             apo_file = os.path.join(dir_path, sample_preparation_id + '-' + imaging_id + '.apo')
         apo_path = apo_file  # 取第一个匹配的.apo文件
 
+        anns_fname = os.path.split(apo_path)[-1]
+        ptrsbn = anns_fname.split('.')[0]
+        # check if image exist
+        ptrsid = ptrsbn
+        docid_split = ptrsbn.split('-')
+        if len(docid_split) == 5:
+            if not docid_split[-1].startswith('B'):
+                ptrsid = ptrsbn[0:-1 * (len(docid_split[4]) + 1)]
+        elif len(docid_split) == 6:
+            ptrsid = ptrsbn[0:-1 * (len(docid_split[5]) + 1)]
+
+        imgpath = os.path.join(imgdir, ptrsid, ptrsbn + '_8bit.v3draw')
+        if not os.path.exists(imgpath):
+            print('No image data of ', ptrsbn)
+            raise HTTPException(status_code=404, detail=f"图像文件不存在: {dir_path}")
+
+        file_stem = os.path.splitext(anns_fname)[0]
+        file_ext = os.path.splitext(anns_fname)[1]
+        folder = dir_path
+        initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
+        shutil.copy(apo_path, initial_file_path)
+
+        # Transfer soma coordinates
+        try:
+            df_transformed = soma_coord_transfer(apo_path, imgdir)
+
+            if not df_transformed.empty:
+                print(f"Transferred soma coordinates: ", df_transformed)
+                # Read the original file as CSV
+                annotation_df = pd.read_csv(apo_path)
+
+                # Update the soma_x and soma_y values in the annotation file
+                i = 0
+                for idx, row in df_transformed.iterrows():
+                    i += 1
+                    if i <= len(annotation_df):
+                        annotation_df.loc[i - 1, 'x'] = row['x']
+                        annotation_df.loc[i - 1, 'y'] = row['y']
+
+                # Save the updated file with the original filename
+                annotation_df.to_csv(apo_path, index=False)
+        except Exception as e:
+            print(f"Error in soma coordinate transfer: {str(e)}")
+            # If transformation fails, restore the original file
+            # shutil.copy(initial_file_path, file_path)
+
+
         # Step 2: Process imaging data
         imaging_result = await process_imaging_data(sample_preparation_id, imaging_id, is_multicolor, db)
 
@@ -4323,6 +4371,13 @@ async def import_cell_table(
         # df['soma_y'] = '--'
         # df['soma_z'] = '--'
         df = df.replace({np.nan: '--'})
+        df['image_file'] = df['Cell ID'].apply(lambda cell_id:
+                                               f"Cell_MIP/{cell_id - cell_id % 1000}_{cell_id - cell_id % 1000 + 999}/"
+                                               f"{cell_id - cell_id % 100}_{cell_id - cell_id % 100 + 99}/{cell_id}.tif")
+
+        df['v3dpbd_file'] = df['Cell ID'].apply(lambda cell_id:
+                                                f"Cell_Image/{cell_id - cell_id % 1000}_{cell_id - cell_id % 1000 + 999}/"
+                                                f"{cell_id - cell_id % 100}_{cell_id - cell_id % 100 + 99}/{cell_id}.v3dpbd")
 
         # 获取数据库表
         table_name = 'human_singlecell_trackingtable_20240712'
@@ -4344,7 +4399,8 @@ async def import_cell_table(
 
         # 提交事务
         db.commit()
-
+        # Save the updated DataFrame back to the CSV file
+        df.to_csv(with_cell_id, index=False)
         return {
             "status": "success",
             "message": "数据已成功导入并生成标记文件",
