@@ -2721,8 +2721,6 @@ async def upload_injection_file(
 
 
 imgdir = '/PB/BRAINTELL/Projects/HumanNeurons/AllBrainSlices/PTRSB_DB'
-# imgdir = '/Users/majortom/PyCharmProj/PTRSB_DB'
-# imgdir = '/Users/wanglijun/PycharmProjects/PTRSB_DB'
 def soma_coord_transfer(apo_path,imgdir=imgdir,img_block_half_size=700):
     outdf=pd.DataFrame()
     if not os.path.exists(apo_path):
@@ -4154,7 +4152,7 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
         if not os.path.exists(dir_path):
             raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
 
-        await insert_injection_to_db(sample_preparation_id,db)
+
 
         # 查找.apo文件
         # apo_files = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.apo')]
@@ -4213,7 +4211,7 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
             # If transformation fails, restore the original file
             # shutil.copy(initial_file_path, file_path)
 
-
+        await insert_injection_to_db(sample_preparation_id, db)
         # Step 2: Process imaging data
         imaging_result = await process_imaging_data(sample_preparation_id, imaging_id, is_multicolor, db)
 
