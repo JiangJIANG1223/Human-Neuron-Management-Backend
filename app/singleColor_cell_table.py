@@ -65,7 +65,7 @@ def extract_imaging_and_injection_data(ptrsb):
             soma_y,
             soma_z
         FROM imaging_information_20241023
-        WHERE `PTRS(B)` = :ptrsb
+        WHERE document_name = :ptrsb
         """
         injection_query = f"""
         SELECT 
@@ -117,7 +117,7 @@ def extract_imaging_and_injection_data(ptrsb):
         else:
             # 灌注信息一致，可以安全地去重
             injection_df_unique = injection_df.drop_duplicates(subset='PTRS(B)')
-        print('injection_df_unique: ', injection_df_unique)
+        print('injection_df_unique: ', len(injection_df_unique))
         # 以 imaging_df 为基准，基于 PTRS(B) 列合并
         merged_df = pd.merge(imaging_df, injection_df_unique, on='PTRS(B)', how='left')
 

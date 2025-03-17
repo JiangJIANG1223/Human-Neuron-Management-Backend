@@ -2721,6 +2721,7 @@ async def upload_injection_file(
 
 
 imgdir = '/PB/BRAINTELL/Projects/HumanNeurons/AllBrainSlices/PTRSB_DB'
+# imgdir = '/Users/wanglijun/PycharmProjects/PTRSB_DB'
 def soma_coord_transfer(apo_path,imgdir=imgdir,img_block_half_size=700):
     outdf=pd.DataFrame()
     if not os.path.exists(apo_path):
@@ -4179,7 +4180,7 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
         imgpath = os.path.join(imgdir, ptrsid, ptrsbn + '_8bit.v3draw')
         if not os.path.exists(imgpath):
             print('No image data of ', ptrsbn)
-            raise HTTPException(status_code=404, detail=f"图像文件不存在: {dir_path}")
+            raise HTTPException(status_code=404, detail=f"图像文件不存在: {imgpath}")
 
         file_stem = os.path.splitext(anns_fname)[0]
         file_ext = os.path.splitext(anns_fname)[1]
@@ -4219,17 +4220,17 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
         ptrs_result = await update_ptrs(db)
 
         # Extract PTRS from filename
-        apo_filename = os.path.basename(apo_path)
-        ptrs_match = re.search(r'(P\d+-T\d+-R\d+-S\d+(?:-B\d+)?)', apo_filename)
-        if not ptrs_match:
-            raise HTTPException(status_code=400, detail="无法从文件名提取PTRS(B)")
-        ptrs = ptrs_match.group(1)
+        # apo_filename = os.path.basename(apo_path)
+        # ptrs_match = re.search(r'(P\d+-T\d+-R\d+-S\d+(?:-B\d+)?)', apo_filename)
+        # if not ptrs_match:
+        #     raise HTTPException(status_code=400, detail="无法从文件名提取PTRS(B)")
+        # ptrs = ptrs_match.group(1)
 
         # Step 4: Generate cell table
         file_path = await generate_cell_table(
             sample_preparation_id = sample_preparation_id,
             imaging_id = imaging_id,
-            ptrs=ptrs,
+            ptrs=ptrsbn,
             is_multicolor=is_multicolor,
         )
 
@@ -4436,6 +4437,40 @@ async def insert_injection_to_db(sample_preparation_id, db):
     prefix_pattern = re.compile(rf"^{re.escape(prefix)}_C\d+$")
 
     try:
+        # 读取CSV文件
+        df = pd.read_csv(file_path)
+
+        # 检查必要的列是否存在
+        for col in REQUIRED_COLUMNS_NEW:
+            if col not in df.columns:
+                continue
+
+        # 检查是否已经存在于数据库
+        if 'Id' in df.columns:
+            # 从CSV获取所有ID
+            csv_ids = df['Id'].tolist()
+
+            # 查询数据库检查这些记录是否已存在
+            query = text("""
+                   SELECT COUNT(*) 
+                   FROM injection_table_20241028 
+                   WHERE Id IN :ids 
+                   AND `PTRS(B)` = :sample_id
+               """)
+
+            result = db.execute(
+                query,
+                {"ids": tuple(csv_ids) if len(csv_ids) > 1 else (csv_ids[0],),
+                 "sample_id": sample_preparation_id}
+            ).scalar()
+
+            # 如果所有ID都已存在，则不需要插入
+            if result == len(csv_ids):
+                return {"status": "skipped", "message": "CSV数据已存在于数据库中，无需重复插入"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"处理CSV文件时出错: {str(e)}")
+
+    try:
         # 读取 CSV 文件内容并将其转换为 DataFrame
         df = pd.read_csv(pd.io.common.BytesIO(file_content), encoding='utf-8')
 
@@ -4507,13 +4542,6 @@ async def insert_injection_to_db(sample_preparation_id, db):
             except ValueError as e:
                 raise HTTPException(status_code=400,
                                     detail=f"Unable to convert date format in column {date_col}: {str(e)}")
-
-        ## 添加 ihc_category 列并根据 dye_name 列设置值
-        # if 'ihc_category' not in df.columns:
-        #     df['ihc_category'] = df['dye_name'].apply(lambda x: 'Lucifer Yellow' if x == 'Lucifer Yellow' else '-')
-        # else:
-        #     df.loc[df['dye_name'] == 'Lucifer Yellow', 'ihc_category'] = 'Lucifer Yellow'
-        #     df.loc[df['dye_name'] != 'Lucifer Yellow', 'ihc_category'] = '-'
 
         # 修改：处理 ihc_category 列
         cutoff_date = pd.to_datetime('2024-10-29')

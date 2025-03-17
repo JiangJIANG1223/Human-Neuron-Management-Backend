@@ -66,7 +66,7 @@ def extract_imaging_and_injection_data(ptrsb):
             soma_y,
             soma_z
         FROM imaging_information_20241023
-        WHERE `PTRS(B)` = :ptrsb
+        WHERE document_name = :ptrsb
         """
         injection_query = f"""
         SELECT 
