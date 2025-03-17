@@ -169,7 +169,11 @@ class SampleInfoBase(BaseModel):
     sample_snapshot: Optional[str] = None
     sample_image: Optional[str] = None
     sample_annotation: Optional[str] = None
-
+    comment1: Optional[str] = None
+    comment2: Optional[str] = None
+    comment3: Optional[str] = None
+    comment4: Optional[str] = None
+    comment5: Optional[str] = None
     class Config:
         orm_mode = True
 

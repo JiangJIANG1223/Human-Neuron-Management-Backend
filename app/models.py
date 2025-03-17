@@ -141,6 +141,11 @@ class Sample_Information(Base):
     sample_snapshot = Column("sample_snapshot", String(255))
     sample_image = Column("sample_image", String(255))
     sample_annotation = Column("sample_annotation", String(255))
+    comment1 = Column(String(300), nullable=True)
+    comment2 = Column(String(300), nullable=True)
+    comment3 = Column(String(300), nullable=True)
+    comment4 = Column(String(300), nullable=True)
+    comment5 = Column(String(300), nullable=True)
 
 class DailyReport(Base):
     __tablename__ = 'daily_reports_20240628'
