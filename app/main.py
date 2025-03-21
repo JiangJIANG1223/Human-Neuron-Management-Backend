@@ -55,6 +55,10 @@ from app.singleColor_cell_table import extract_imaging_and_injection_data_previe
 from app.singleColor_cell_table import extract_sample_information, generate_cell_csv, process_cell_csv
 from app.multicolor_cell_table import extract_imaging_and_injection_data as extract_multi_color_data
 from app.multicolor_cell_table import extract_imaging_and_injection_data_preview as extract_multi_color_data_preview
+
+# from . import config_local as config
+from . import config_spl as config
+# from . import config_fdzj as config
 app = FastAPI()
 
 app.add_middleware(
@@ -66,7 +70,7 @@ app.add_middleware(
 )
 
 # 挂载 static 目录，服务静态文件
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
 
 
 # Dependency to get the DB session
@@ -192,8 +196,8 @@ async def Upload_Sample_snapshot(folderName: str = Form(...), sample_idx: int = 
     crud.create_user_log(db, int(user_id), action=f"upload sample snapshot",
                          details=details)
 
-    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_snapshot"
-    os.makedirs(base_upload_dir, exist_ok=True)
+    base_upload_dir = config.SAMPLE_SNAPSHOT_DIR_TEMPLATE.format(idx=str(sample_idx), folder=realfolderName)
+    config.ensure_dir(base_upload_dir)
     responses = []
     for file in files:
         # 使用 webkitRelativePath 获取相对路径，假设文件名为 "folderName/innerFolder/file.txt"
@@ -233,8 +237,8 @@ async def Upload_Sample_image(folderName: str = Form(...), sample_idx: int = For
         # 否则，直接打印原字符串
         realfolderName = folderName
 
-    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_image"
-    os.makedirs(base_upload_dir, exist_ok=True)
+    base_upload_dir = config.SAMPLE_IMAGE_DIR_TEMPLATE.format(idx=str(sample_idx), folder=realfolderName)
+    config.ensure_dir(base_upload_dir)
     responses = []
     for file in files:
         # 使用 webkitRelativePath 获取相对路径，假设文件名为 "folderName/innerFolder/file.txt"
@@ -278,8 +282,7 @@ async def Upload_Sample_annoation(folderName: str = Form(...), sample_idx: int =
     else:
         # 否则，直接打印原字符串
         realfolderName = folderName
-
-    base_upload_dir = f"/mnt/nfs/hndb/Sample_Files/{str(sample_idx)}_{realfolderName}/sample_annoation"
+    base_upload_dir = config.SAMPLE_ANNOTATION_DIR_TEMPLATE.format(idx=str(sample_idx), folder=realfolderName)
     os.makedirs(base_upload_dir, exist_ok=True)
     responses = []
     for file in files:
@@ -318,8 +321,8 @@ async def download_sample_file(request: Request):
     print(idx)
 
     # 确定要搜索的根文件夹路径
-    root_dir = r"/mnt/nfs/hndb/Sample_Files"
-    temp_dir = r"/mnt/nfs/hndb/temp/Sample_temp"
+    root_dir = config.SAMPLE_FILES_DIR
+    temp_dir = config.SAMPLE_TEMP_DIR
 
     # 检查匹配的文件夹
     matched_folder_paths = []  # 使用列表存储匹配的文件夹路径
@@ -360,7 +363,7 @@ async def get_sample_snapshot(request: Request):
     idx = data.get("idx")  # 获取 idx 参数
     print(idx)
 
-    FOLDER_PATH = r"/mnt/nfs/hndb/Sample_Files/"
+    FOLDER_PATH = config.SAMPLE_FILES_DIR
     # 用于存储匹配的文件夹路径
     matched_folder_paths = []
 
@@ -705,7 +708,7 @@ class SWCfilepath(BaseModel):
 
 @app.post("/api/getSWC/")
 def get_swcimage(request: SWCfilepath, db: Session = Depends(get_db)):
-    globalpath1 = "/mnt/nfs/hndb"
+    globalpath1 = config.NFS_BASE
     repath = globalpath1 + request.ss
     mippath = globalpath1 + "/" + request.mipforswc
     swcimage = get_swc(repath, mippath, request.cellid, db=db)
@@ -1004,7 +1007,7 @@ class MIP_SWCfilepath(BaseModel):
 
 @app.post("/api/getMIPSWC/")
 def get_mipswc_image(request: MIP_SWCfilepath, db: Session = Depends(get_db)):
-    globalpath = "/mnt/nfs/hndb"
+    globalpath = config.NFS_BASE
     swc = globalpath + request.swc_file
     mip = globalpath + "/" + request.image_file
     # print(swc)
@@ -1063,7 +1066,7 @@ def find_storage_path(base_folder, filename):
 @app.post('/api/singleConvert/')  # 注意 API 路径前面需要加斜杠
 async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = Depends(get_db)):
     # 第一步，确定上传路径
-    uploadbase = "/mnt/nfs/hndb/V3DRAW_16bit"  # 16bit的根目录
+    uploadbase = config.V3DRAW_16BIT_DIR  # 16bit的根目录
     result_path = find_storage_path(uploadbase, file.filename)
     parts = result_path.split('//')
 
@@ -1103,7 +1106,7 @@ async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = 
     # 提交更改到数据库
     db.commit()
 
-    mipbase = r"/mnt/nfs/hndb/MIP_Downsample"
+    mipbase = config.MIP_DOWNSAMPLE_DIR
     directory1 = os.path.join(mipbase, result_path).replace("\\", "/")
 
     outImage = os.path.join(directory1, image.replace(".v3draw", '.tif')).replace("\\", "/")
@@ -1116,7 +1119,7 @@ async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = 
     os.system(cmd)
 
     # 转8bit
-    bit8base = r"/mnt/nfs/hndb/V3DRAW_8bit"
+    bit8base = config.V3DRAW_8BIT_DIR
     directory2 = os.path.join(bit8base, result_path).replace("\\", "/")
     outImage = os.path.join(directory2, '8bit_' + image).replace("\\", "/")
     # 创建文件
@@ -1146,7 +1149,7 @@ async def upload_singlefile_convert(file: UploadFile = File(...), db: Session = 
     # 提交更改到数据库
     db.commit()
 
-    pbdbase = r"/mnt/nfs/hndb/V3DPBD"
+    pbdbase = config.V3DPBD_DIR
     directory3 = os.path.join(pbdbase, result_path).replace("\\", "/")
     outImage = os.path.join(directory3, image.replace(".v3draw", '.v3dpbd')).replace("\\", "/")
     # 创建文件
@@ -1173,7 +1176,7 @@ async def upload_2Dfiles(folderName: str = Form(...), files: List[UploadFile] = 
     # from fastapi import FastAPI, File, UploadFile, Form
 
     # UPLOAD_DIR = f"C:/Users/86132/Desktop/MIP_down/2d-batch/{folderName}"
-    UPLOAD_DIR = "/mnt/nfs/hndb/2D_raw_images"
+    UPLOAD_DIR = config.RAW_2D_IMAGES_DIR
     # 第一步，确定上传路径
     result_path = find_storage_path(UPLOAD_DIR, folderName)
     parts = result_path.split('//')
@@ -1181,7 +1184,7 @@ async def upload_2Dfiles(folderName: str = Form(...), files: List[UploadFile] = 
     # 然后从第二部分中提取所需的内容
     result_path = parts[1].split('/')[-2] + '/' + parts[1].split('/')[-1]
     print("1result path", result_path)
-    tmp = os.path.join(UPLOAD_DIR, result_path).replace("\\", "/")  # tmp是/mnt下的目录
+    tmp = os.path.join(UPLOAD_DIR, result_path).replace("\\", "/")
     print(tmp)
     UPLOAD_DIR = os.path.join(tmp, folderName).replace("\\", "/")
 
@@ -1245,11 +1248,11 @@ def protected(Authorize: AuthJWT = Depends()):
 def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
     # 提取文件名和路径
     if len(file_path) == 5:
-        PBDuploadbase = r"/mnt/nfs/hndb/V3DPBD"
+        PBDuploadbase = config.V3DPBD_DIR
         pbdpath = foundPBD.found_pbd_file(PBDuploadbase, file_path)  # 新的相对路径
-        file_path = '/mnt/nfs/hndb/' + pbdpath
+        file_path = os.path.join(config.NFS_BASE,pbdpath)
     else:
-        file_path = '/mnt/nfs/hndb/' + file_path
+        file_path = os.path.join(config.NFS_BASE,file_path)
 
     # 提取文件名和路径
     file_name = os.path.basename(file_path)
@@ -1274,7 +1277,7 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="File not found")
     else:
         # 检查 temp 目录中是否有对应的 {cell_id}.zip 文件
-        zip_file_path = os.path.join('/mnt/nfs/hndb/temp', f"{cell_id}.zip")
+        zip_file_path = os.path.join(config.TEMP_DIR, f"{cell_id}.zip")
         if os.path.exists(zip_file_path):
             # 如果有，直接返回 zip 文件
             print(f"{cell_id}.zip is in the temp folder")
@@ -1282,14 +1285,14 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
                                 media_type='application/zip')
 
         # 生成 .marker 文件
-        marker_file_path = os.path.join('/mnt/nfs/hndb/temp', f"{cell_id}.marker")
+        marker_file_path = os.path.join(config.TEMP_DIR, f"{cell_id}.marker")
         with open(marker_file_path, 'w') as marker_file:
             marker_file.write("##x,y,z,radius,shape,name,comment,color_r,color_g,color_b\n")
             marker_file.write(
                 f"{cell_data.soma_x},{cell_data.soma_y},{cell_data.soma_z},0,0,{cell_data.cell_id},0,255,0,0\n")
 
         # 打包 .v3dpbd 和 .marker 文件
-        zip_file_path = os.path.join('/mnt/nfs/hndb/temp', f"{cell_id}.zip")
+        zip_file_path = os.path.join(config.TEMP_DIR, f"{cell_id}.zip")
         with zipfile.ZipFile(zip_file_path, 'w') as zipf:
             zipf.write(file_path, file_name)
             zipf.write(marker_file_path, os.path.basename(marker_file_path))
@@ -1305,7 +1308,7 @@ def download_file(file_path: str, cell_id: str, db: Session = Depends(get_db)):
 @app.get("/api/image/{file_path:path}")
 def get_image(file_path: str):
     try:
-        file_path = '/mnt/nfs/hndb/' + file_path
+        file_path = os.path.join(config.NFS_BASE, file_path)
         # 检查文件是否存在
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="File not found")
@@ -2046,7 +2049,7 @@ def delete_sample_information(idx: int, Authorize: AuthJWT = Depends(), db: Sess
 
 
 # 记录本照片上传路径
-UPLOAD_DIR = "/mnt/nfs/hndb/Record_Book_Pics"
+UPLOAD_DIR = config.RECORD_BOOK_PICS_DIR
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
@@ -2091,9 +2094,9 @@ async def get_record_book_pics():
 # TEMP_DIR = "Injection_Files/temp"
 # DB_UPLOAD_DIR = "Injection_Files/DB_Uploads"  # 设置CSV文件上传的目录
 
-ORIGINAL_UPLOAD_DIR = "/mnt/nfs/hndb/Injection_Files/Original"
-TEMP_DIR = "/mnt/nfs/hndb/Injection_Files/temp"
-DB_UPLOAD_DIR = "/mnt/nfs/hndb/Injection_Files/DB_Uploads"  # 设置CSV文件上传的目录
+ORIGINAL_UPLOAD_DIR = config.INJECTION_ORIGINAL_DIR
+TEMP_DIR = config.INJECTION_TEMP_DIR
+DB_UPLOAD_DIR = config.INJECTION_DB_UPLOAD_DIR
 
 
 # 存储多个文件到子文件夹
@@ -2349,14 +2352,10 @@ async def download_folder(folder: str):
     return FileResponse(zip_file_path, media_type='application/zip', filename=f"{folder}.zip")
 
 
-# 定义文件保存路径
-# IMAGING_METADATA_DIR = "Imaging_Files/Metadata"
-# MARKER_FILES_DIR = "Imaging_Files/Markers"
-# ANNOTATION_FILES_DIR = "Imaging_Files/Annotations"
-IMAGING_METADATA_DIR = "/mnt/nfs/hndb/Imaging_Files/Metadata"
-MARKER_FILES_DIR = "/mnt/nfs/hndb/Imaging_Files/Markers"
-ANNOTATION_FILES_DIR = "/mnt/nfs/hndb/Imaging_Files/Annotations"
-IMAGING_MATCHTABLE_DIR = "/mnt/nfs/hndb/Imaging_Files/MatchTables"
+IMAGING_METADATA_DIR = config.IMAGING_METADATA_DIR
+MARKER_FILES_DIR = config.MARKER_FILES_DIR
+ANNOTATION_FILES_DIR = config.ANNOTATION_FILES_DIR
+IMAGING_MATCHTABLE_DIR = config.IMAGING_MATCHTABLE_DIR
 
 # 确保目录存在
 os.makedirs(IMAGING_METADATA_DIR, exist_ok=True)
@@ -2603,7 +2602,7 @@ async def upload_injection_file(
     Authorize.jwt_required()
     user_id = Authorize.get_jwt_subject()
     sample_preparation_id = os.path.splitext(file.filename)[0]
-    upload_path = os.path.join("/mnt/nfs/hndb/SamplePreparation", sample_preparation_id)
+    upload_path = os.path.join(config.SAMPLE_PREPARATION_DIR, sample_preparation_id)
     os.makedirs(upload_path, exist_ok=True)
     file_path = os.path.join(upload_path, file.filename)
 
@@ -2720,7 +2719,7 @@ async def upload_injection_file(
     return response_data
 
 
-imgdir = '/PB/BRAINTELL/Projects/HumanNeurons/AllBrainSlices/PTRSB_DB'
+imgdir = config.PTRSB_DB_DIR
 # imgdir = '/Users/wanglijun/PycharmProjects/PTRSB_DB'
 def soma_coord_transfer(apo_path,imgdir=imgdir,img_block_half_size=700):
     outdf=pd.DataFrame()
@@ -2892,10 +2891,13 @@ async def upload_imaging_annotation_file(
         # STEP: Define the correct folder path and save file
         # ─────────────────────────────────────────────────────────────────────────
         if imaging_id == '--':
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            folder = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-        os.makedirs(folder, exist_ok=True)
+            folder = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(folder)
 
         # file_path = os.path.join(folder, file.filename)
         file_name = file.filename
@@ -3012,11 +3014,13 @@ async def upload_imaging_metadata(
         validate_sample_number(file.filename)
         print('2')
         if imaging_id == '--':
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            folder = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-        # Check if file already exists
-        os.makedirs(folder, exist_ok=True)
+            folder = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(folder)
         file_path = os.path.join(folder, file.filename)
         #放到前端做重复检查以及是否覆盖
         # if os.path.exists(file_path):
@@ -3163,10 +3167,13 @@ async def upload_imaging_marker(
                 detail="Invalid C number in the 'name' column. Please check."
             )
         if imaging_id == '--':
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            folder = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-        os.makedirs(folder, exist_ok=True)
+            folder = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(folder)
         file_path = os.path.join(folder, file.filename)
         # Save file
         file.file.seek(0)
@@ -3236,10 +3243,13 @@ async def upload_imaging_match_table(
         validate_sample_number(file.filename)
         print('2')
         if imaging_id == '--':
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            folder = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-        os.makedirs(folder, exist_ok=True)
+            folder = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(folder)
         # Check if file already exists
         file_path = os.path.join(folder, file.filename)
         # if os.path.exists(file_path):
@@ -3414,13 +3424,16 @@ def delete_file(file_path: str):
 @app.get("/api/download_imaging_records_files/{sample_preparation_id}/{imaging_id}")
 def download_imaging_records_files(sample_preparation_id: str, imaging_id: str, background_tasks: BackgroundTasks):
     try:
-        BASE_DIR = "/mnt/nfs/hndb/SamplePreparation"
         # 构建文件夹路径
-        sample_folder = os.path.join(BASE_DIR, sample_preparation_id)
+        sample_folder = config.SAMPLE_PREPARATION_parent_DIR.format(sample_id=sample_preparation_id)
         if imaging_id == '--':
-            imaging_folder = os.path.join(sample_folder, f"{sample_preparation_id}")
+            imaging_folder = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            imaging_folder = os.path.join(sample_folder, f"{sample_preparation_id}-{imaging_id}")
+            imaging_folder = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(imaging_folder)
 
         # 校验文件夹是否存在
         if not os.path.exists(sample_folder) or not os.path.exists(imaging_folder):
@@ -3613,7 +3626,7 @@ async def upload_imaging_map(imaging_map_file: UploadFile = File,Authorize: Auth
     else:
         return JSONResponse(content={"message": "Invalid file name format", "file": file_name}, status_code=400)
     # 构建保存路径
-    base_upload_dir = f"/mnt/nfs/hndb/SamplePreparation/{folder_name}"
+    base_upload_dir = os.path.join(config.SAMPLE_PREPARATION_DIR,folder_name)
     os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
 
     # 保存文件
@@ -3630,7 +3643,7 @@ async def upload_imaging_map(imaging_map_file: UploadFile = File,Authorize: Auth
 
 @app.get("/api/get_imaging_map/{sample_preparation_id}")
 def get_imaging_map(sample_preparation_id: str):
-    base_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
+    base_path = os.path.join(config.SAMPLE_PREPARATION_DIR, sample_preparation_id)
 
     if not os.path.exists(base_path):
         raise HTTPException(status_code=404, detail="Folder not found")
@@ -3647,8 +3660,7 @@ def get_imaging_map(sample_preparation_id: str):
 
 @app.get("/api/get_imaging_mip/{sample_preparation_id}/{imaging_id}")
 def get_imaging_mip(sample_preparation_id: str, imaging_id: str):
-    base_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
-
+    base_path = os.path.join(config.SAMPLE_PREPARATION_DIR, sample_preparation_id)
     if not os.path.exists(base_path):
         raise HTTPException(status_code=404, detail="Folder not found")
     if imaging_id.isdigit():
@@ -3675,7 +3687,7 @@ def get_imaging_mip(sample_preparation_id: str, imaging_id: str):
 
 @app.get("/api/get_injection_file/{sample_preparation_id}")
 def get_injection_file(sample_preparation_id: str):
-    base_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
+    base_path = os.path.join(config.SAMPLE_PREPARATION_DIR, sample_preparation_id)
 
     if not os.path.exists(base_path):
         raise HTTPException(status_code=404, detail="Folder not found")
@@ -3759,12 +3771,14 @@ async def upload_imaging_data(imaging_data_file: UploadFile = File, sample_prepa
     user_id = Authorize.get_jwt_subject()
     responses = []
     file_name = imaging_data_file.filename
-    # 构建保存路径
     if imaging_id == '--':
-        base_upload_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        base_upload_dir = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
     else:
-        base_upload_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-    os.makedirs(base_upload_dir, exist_ok=True)
+        base_upload_dir = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+            sample_id=sample_preparation_id,
+            imaging_id=imaging_id
+        )
+    config.ensure_dir(base_upload_dir)
 
     # 保存文件
     file_location = os.path.join(base_upload_dir, file_name)
@@ -3788,7 +3802,7 @@ async def upload_bright_field_data(
 ):
     Authorize.jwt_required()
     user_id = Authorize.get_jwt_subject()
-    base_upload_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}"
+    base_upload_dir = os.path.join(config.SAMPLE_PREPARATION_DIR, sample_preparation_id)
     os.makedirs(base_upload_dir, exist_ok=True)  # 确保文件夹存在
 
     saved_files = []
@@ -3855,7 +3869,7 @@ async def get_injection_ids(sample_preparation_id: str):
     """
     # 替换 sample_id 中的 `-` 为 `_`，以匹配文件命名规则
     file_name = f"{sample_preparation_id}.csv"
-    folder = os.path.join("/mnt/nfs/hndb/SamplePreparation", sample_preparation_id)
+    folder = os.path.join(config.SAMPLE_PREPARATION_DIR, sample_preparation_id)
     file_path = os.path.join(folder, file_name)
     print(file_path)
     # 检查文件是否存在
@@ -3880,7 +3894,8 @@ async def get_injection_ids(sample_preparation_id: str):
 async def insert_injection_file_to_db(sample_preparation_id: str, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
     Authorize.jwt_required()
     user_id = Authorize.get_jwt_subject()
-    file_path = "/mnt/nfs/hndb/SamplePreparation"
+
+    file_path = config.SAMPLE_PREPARATION_DIR
     # 构建文件路径
     file_path = os.path.join(file_path, sample_preparation_id, f"{sample_preparation_id}.csv")
 
@@ -3984,7 +3999,7 @@ async def insert_injection_file_to_db(sample_preparation_id: str, Authorize: Aut
 
 @app.get("/api/check_sample_file_exists")
 async def check_sample_file_exists(filename: str):
-    folder = f"/mnt/nfs/hndb/SamplePreparation/{filename.split('.')[0]}"
+    folder = os.path.join(config.SAMPLE_PREPARATION_DIR,filename.split('.')[0])
     file_path = os.path.join(folder, filename)
     print(folder)
     if os.path.exists(file_path):
@@ -3996,10 +4011,13 @@ async def check_sample_file_exists(filename: str):
 async def check_imaging_record_file_exists(filename: str, sample_preparation_id: str, imaging_id: str):
     # 提取文件名中的基础部分（不包含扩展名）
     if imaging_id == '--':
-        folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        folder = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
     else:
-        folder = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-    # 生成完整文件路径
+        folder = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+            sample_id=sample_preparation_id,
+            imaging_id=imaging_id
+        )
+    config.ensure_dir(folder)
     file_path = os.path.join(folder, filename)
     if os.path.exists(file_path):
         return {"exists": True}
@@ -4015,16 +4033,17 @@ async def process_imaging_data(
         db: Session = Depends(get_db),
 ):
     """Process APO and metadata files and insert into imaging_information table"""
-    # 构建目录路径
     if imaging_id == '--':
-        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        dir_path = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
     else:
-        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-
+        dir_path = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+            sample_id=sample_preparation_id,
+            imaging_id=imaging_id
+        )
+    config.ensure_dir(dir_path)
     # 检查目录是否存在
     if not os.path.exists(dir_path):
         raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
-
     # 查找.apo文件
     if imaging_id == '--':
         apo_file = os.path.join(dir_path, sample_preparation_id + '.apo')
@@ -4108,10 +4127,13 @@ async def generate_cell_table(
     try:
         print('ptrs:',ptrs)
         if imaging_id == '--':
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            dir_path = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-
+            dir_path = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(dir_path)
         # Create temp file paths
         temp_dir = dir_path
         os.makedirs(temp_dir, exist_ok=True)
@@ -4145,10 +4167,13 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
     try:
         # 构建目录路径
         if imaging_id == '--':
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            dir_path = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-
+            dir_path = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(dir_path)
         # 检查目录是否存在
         if not os.path.exists(dir_path):
             raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
@@ -4255,9 +4280,13 @@ async def import_cell_table(
 ):
     await complete_workflow(is_multicolor,sample_preparation_id,imaging_id, db)
     if imaging_id == '--':
-        temp_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        temp_dir = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
     else:
-        temp_dir = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
+        temp_dir = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+            sample_id=sample_preparation_id,
+            imaging_id=imaging_id
+        )
+    config.ensure_dir(temp_dir)
     without_cell_id = os.path.join(temp_dir, "cell_without_cellID.csv")
     with_cell_id = os.path.join(temp_dir, "cell_with_cellID.csv")
 
@@ -4416,7 +4445,7 @@ async def insert_injection_to_db(sample_preparation_id, db):
     os.makedirs(DB_UPLOAD_DIR, exist_ok=True)
 
     # 准备保存文件的路径
-    file_path = file_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}.csv"
+    file_path = os.path.join(config.SAMPLE_PREPARATION_DIR,sample_preparation_id, f"{sample_preparation_id}.csv")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File not found at path: {file_path}")
     # 将文件内容保存到内存中，以便后续操作
@@ -4593,7 +4622,7 @@ async def extract_injection_info(sample_preparation_id,db):
     os.makedirs(DB_UPLOAD_DIR, exist_ok=True)
 
     # 准备保存文件的路径
-    file_path = file_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}.csv"
+    file_path = os.path.join(config.SAMPLE_PREPARATION_DIR, sample_preparation_id, f"{sample_preparation_id}.csv")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail=f"File not found at path: {file_path}")
     # 将文件内容保存到内存中，以便后续操作
@@ -4734,10 +4763,13 @@ async def process_imaging_data_preview(
     """Process APO and metadata files and insert into imaging_information table"""
     # 构建目录路径
     if imaging_id == '--':
-        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+        dir_path = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
     else:
-        dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-
+        dir_path = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+            sample_id=sample_preparation_id,
+            imaging_id=imaging_id
+        )
+    config.ensure_dir(dir_path)
     # 检查目录是否存在
     if not os.path.exists(dir_path):
         raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
@@ -4782,10 +4814,13 @@ async def generate_cell_table_preview(
     """Generate cell table CSV for specified PTRS"""
     try:
         if imaging_id == '--':
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            dir_path = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-
+            dir_path = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(dir_path)
         # Create temp file paths
         temp_dir = dir_path
         os.makedirs(temp_dir, exist_ok=True)
@@ -4816,10 +4851,13 @@ async def preview_insert_sql(
     try:
         # 构建目录路径
         if imaging_id == '--':
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}"
+            dir_path = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
         else:
-            dir_path = f"/mnt/nfs/hndb/SamplePreparation/{sample_preparation_id}/{sample_preparation_id}-{imaging_id}"
-
+            dir_path = config.SAMPLE_PREPARATION_IMAGING_TEMPLATE.format(
+                sample_id=sample_preparation_id,
+                imaging_id=imaging_id
+            )
+        config.ensure_dir(dir_path)
         # 检查目录是否存在
         if not os.path.exists(dir_path):
             raise HTTPException(status_code=404, detail=f"目录不存在: {dir_path}")
