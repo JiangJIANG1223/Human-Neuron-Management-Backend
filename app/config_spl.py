@@ -6,7 +6,7 @@ NFS_BASE = "/mnt/nfs/hndb"  # Base path for NFS storage
 
 # Static files
 STATIC_DIR = "static"
-
+location = 'spl'
 # Sample directories
 SAMPLE_FILES_DIR = os.path.join(NFS_BASE, "Sample_Files")
 SAMPLE_TEMP_DIR = os.path.join(NFS_BASE, "temp", "Sample_temp")

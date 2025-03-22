@@ -4402,11 +4402,14 @@ async def import_cell_table(
         df['image_file'] = df['Cell ID'].apply(lambda cell_id:
                                                f"Cell_MIP/{cell_id - cell_id % 1000}_{cell_id - cell_id % 1000 + 999}/"
                                                f"{cell_id - cell_id % 100}_{cell_id - cell_id % 100 + 99}/{cell_id}.tif")
-
-        df['v3dpbd_file'] = df['Cell ID'].apply(lambda cell_id:
+        if config.location == 'spl':
+            df['v3dpbd_file'] = df['Cell ID'].apply(lambda cell_id:
                                                 f"Cell_Image/{cell_id - cell_id % 1000}_{cell_id - cell_id % 1000 + 999}/"
                                                 f"{cell_id - cell_id % 100}_{cell_id - cell_id % 100 + 99}/{cell_id}.v3dpbd")
-
+        elif config.location == 'fdzj':
+            df['v3dpbd_file'] = df['Cell ID'].apply(lambda cell_id:
+                                                f"{'Cell_images_1_36999' if cell_id < 37000 else 'Cell_images_37000_62999'}/{cell_id - cell_id % 1000}_{cell_id - cell_id % 1000 + 999}/"
+                                                f"{cell_id - cell_id % 100}_{cell_id - cell_id % 100 + 99}/{cell_id}.v3dpbd")
         # 获取数据库表
         table_name = 'human_singlecell_trackingtable_20240712'
         for index, row in df.iterrows():
