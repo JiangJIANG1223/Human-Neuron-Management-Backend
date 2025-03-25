@@ -319,38 +319,46 @@ def insert_to_db(apo_data, imaging_info, apo_file, imaging_file):
     if '_DB' in apo_file_basename or '_DB' in imaging_file_basename:
         print(f"文件已处理过，跳过: {apo_file_basename} 和 {imaging_file_basename}")
         return
-
     # 插入数据
-    for index, apo in apo_data.iterrows():
-        data_row = {
-            'ID': apo['ID'],  # ID 默认为 '--'
-            'imaging_device': imaging_info.imaging_device,
-            'laser_wavelength': imaging_info.laser_wavelength,
-            'laser_power': imaging_info.laser_power,
-            'laser_power_ratio': imaging_info.laser_power_ratio,
-            'gain': imaging_info.gain,
-            'scanner': imaging_info.scanner,
-            'averaging': imaging_info.averaging,
-            'pmt_voltage': imaging_info.pmt_voltage,
-            'z_size': imaging_info.z_size,
-            'tiling': imaging_info.tiling,
-            'overlap': imaging_info.overlap,
-            'xy_resolution': imaging_info.xy_resolution,
-            'z_resolution': imaging_info.z_resolution,
-            'document_name': imaging_info.document_name,
-            'image_size': imaging_info.image_size, 
-            'shooting_date': imaging_info.shooting_date,
-            'shooting_staff': imaging_info.shooting_staff,
-            'soma_x': apo['soma_x'],
-            'soma_y': apo['soma_y'],
-            'soma_z': apo['soma_z'],
-            'apo_file': apo_file_basename,    # 更新字段名
-            'metadata_file': imaging_file_basename
-        }
-        stmt = imaging_information.insert().values(data_row)
-        session.execute(stmt)
-    session.commit()
-    print(f"成功插入数据：{apo_file_basename} 和 {imaging_file_basename}")
+    try:
+        # 逐行插入，但不在此处 commit
+        for index, apo in apo_data.iterrows():
+            data_row = {
+                'ID': apo['ID'],
+                'imaging_device': imaging_info.imaging_device,
+                'laser_wavelength': imaging_info.laser_wavelength,
+                'laser_power': imaging_info.laser_power,
+                'laser_power_ratio': imaging_info.laser_power_ratio,
+                'gain': imaging_info.gain,
+                'scanner': imaging_info.scanner,
+                'averaging': imaging_info.averaging,
+                'pmt_voltage': imaging_info.pmt_voltage,
+                'z_size': imaging_info.z_size,
+                'tiling': imaging_info.tiling,
+                'overlap': imaging_info.overlap,
+                'xy_resolution': imaging_info.xy_resolution,
+                'z_resolution': imaging_info.z_resolution,
+                'document_name': imaging_info.document_name,
+                'image_size': imaging_info.image_size,
+                'shooting_date': imaging_info.shooting_date,
+                'shooting_staff': imaging_info.shooting_staff,
+                'soma_x': apo['soma_x'],
+                'soma_y': apo['soma_y'],
+                'soma_z': apo['soma_z'],
+                'apo_file': apo_file_basename,
+                'metadata_file': imaging_file_basename
+            }
+            stmt = imaging_information.insert().values(data_row)
+            session.execute(stmt)
+
+        # 全部执行完后再一次性提交
+        session.commit()
+        print(f"成功插入数据：{apo_file_basename} 和 {imaging_file_basename}")
+
+    except Exception as e:
+        # 如果出错，回滚并打印错误
+        session.rollback()
+        print(f"插入数据时出现错误：{str(e)}")
 
     # 重命名已处理的文件，添加 '_DB' 后缀
     # try:
@@ -486,6 +494,7 @@ def process_single_file_pair_preview(apo_file_path, metadata_file_path):
         return imaging_df
     except Exception as e:
         return {"status": "error", "message": f"处理错误: {str(e)}"}
+
 if __name__ == "__main__":
     apo_dir = 'C:\\Users\\kaixiang\\Downloads\\Single_Color_Somas'
     metadata_dir = 'C:\\Users\\kaixiang\\Downloads\\Metadata'
