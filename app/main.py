@@ -2921,9 +2921,9 @@ async def upload_imaging_annotation_file(
         with open(file_path, "wb") as f:
             f.write(contents)
 
-        # file_stem, file_ext = os.path.splitext(file_name)
-        # initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
-        # shutil.copy(file_path, initial_file_path)
+        file_stem, file_ext = os.path.splitext(file_name)
+        initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
+        shutil.copy(file_path, initial_file_path)
 
         uploaded_files.append(file.filename)
         ## Transfer soma coordinates
@@ -4222,11 +4222,11 @@ async def complete_workflow(is_multicolor,sample_preparation_id,imaging_id,db):
             print('No image data of ', ptrsbn)
             raise HTTPException(status_code=404, detail=f"图像文件不存在: {imgpath}")
 
-        file_stem = os.path.splitext(anns_fname)[0]
-        file_ext = os.path.splitext(anns_fname)[1]
-        folder = dir_path
-        initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
-        shutil.copy(apo_path, initial_file_path)
+        # file_stem = os.path.splitext(anns_fname)[0]
+        # file_ext = os.path.splitext(anns_fname)[1]
+        # folder = dir_path
+        # initial_file_path = os.path.join(folder, f"{file_stem}_initial{file_ext}")
+        # shutil.copy(apo_path, initial_file_path)
 
         # Transfer soma coordinates
         try:
