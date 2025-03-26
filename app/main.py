@@ -1937,13 +1937,9 @@ def read_sample_information(
             like_pattern += f"{char}%"
         query = query.filter(models.Sample_Information.intracranial_location.like(like_pattern))
 
-    # 根据英文简称(南京编)过滤 - 保持字符顺序的模糊匹配
-    if english_abbr_nj and len(english_abbr_nj) > 0:
-        # 构建LIKE表达式，保持字符顺序
-        like_pattern = "%"
-        for char in english_abbr_nj:
-            like_pattern += f"{char}%"
-        query = query.filter(models.Sample_Information.english_abbr_nj.like(like_pattern))
+    # 根据英文简称(南京编)过滤 - 使用模糊匹配
+    if english_abbr_nj:
+        query = query.filter(models.Sample_Information.english_abbr_nj.like(f"%{english_abbr_nj}%"))
 
     # 排序
     query = query.order_by(cast(models.Sample_Information.total_id, Integer))
