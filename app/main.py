@@ -1887,7 +1887,9 @@ def read_sample_information(
     skip: int = 0,
     limit: int = 20,
     sample_source: List[str] = Query(None),  # 接收多个sample_source
-    PID: List[str] = Query(None),            # 接收多个PID
+    PID: List[str] = Query(None),
+    intracranial_location: Optional[str] = Query(None),  # 添加颅内取材部位
+    english_abbr_nj: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -1897,6 +1899,8 @@ def read_sample_information(
     """
     print('Sample Source:', sample_source)
     print('PID:', PID)
+    print('颅内取材部位:', intracranial_location)
+    print('英文简称(南京编):', english_abbr_nj)
 
     query = db.query(models.Sample_Information)
 
@@ -1925,6 +1929,13 @@ def read_sample_information(
                 )
         if or_clauses_pid:
             query = query.filter(or_(*or_clauses_pid))
+
+    if intracranial_location:
+        query = query.filter(models.Sample_Information.intracranial_location.like(f"%{intracranial_location}%"))
+
+    # 根据英文简称(南京编)过滤 - 使用模糊匹配
+    if english_abbr_nj:
+        query = query.filter(models.Sample_Information.english_abbr_nj.like(f"%{english_abbr_nj}%"))
 
     # 排序
     query = query.order_by(cast(models.Sample_Information.total_id, Integer))
