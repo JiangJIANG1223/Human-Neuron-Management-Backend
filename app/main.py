@@ -1930,12 +1930,20 @@ def read_sample_information(
         if or_clauses_pid:
             query = query.filter(or_(*or_clauses_pid))
 
-    if intracranial_location:
-        query = query.filter(models.Sample_Information.intracranial_location.like(f"%{intracranial_location}%"))
+    if intracranial_location and len(intracranial_location) > 0:
+        # 构建LIKE表达式，保持字符顺序
+        like_pattern = "%"
+        for char in intracranial_location:
+            like_pattern += f"{char}%"
+        query = query.filter(models.Sample_Information.intracranial_location.like(like_pattern))
 
-    # 根据英文简称(南京编)过滤 - 使用模糊匹配
-    if english_abbr_nj:
-        query = query.filter(models.Sample_Information.english_abbr_nj.like(f"%{english_abbr_nj}%"))
+    # 根据英文简称(南京编)过滤 - 保持字符顺序的模糊匹配
+    if english_abbr_nj and len(english_abbr_nj) > 0:
+        # 构建LIKE表达式，保持字符顺序
+        like_pattern = "%"
+        for char in english_abbr_nj:
+            like_pattern += f"{char}%"
+        query = query.filter(models.Sample_Information.english_abbr_nj.like(like_pattern))
 
     # 排序
     query = query.order_by(cast(models.Sample_Information.total_id, Integer))
