@@ -99,7 +99,7 @@ class ImagingInfo:
         self.pmt_voltage = '-'  ## 无数据
         self.z_size = ''  ## 更新
         self.tiling = '1'     
-        self.overlap = '10'   
+        self.overlap = '5'
         self.xy_resolution = ''  ## 更新
         self.z_resolution = ''  ## 更新
         self.document_name = ''  ## 更新
