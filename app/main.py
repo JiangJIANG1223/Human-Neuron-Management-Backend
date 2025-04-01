@@ -3399,14 +3399,28 @@ def delete_sample(id: int, Authorize: AuthJWT = Depends(), db: Session = Depends
     # Get details before deleting
     details = SamplePreparationSchema.from_orm(db_sample).json()
 
-    # Now delete the sample
+    # Construct the folder name based on sample information
+    folder_name = f"{db_sample.sampleId}-{db_sample.tissueId}-{db_sample.rollId}-{db_sample.sliceId}"
+    if db_sample.blockId and db_sample.blockId != '--':
+        folder_name += f"-{db_sample.blockId}"
+
+
+    folder_path = os.path.join(config.SAMPLE_PREPARATION_DIR, folder_name)
+    if os.path.exists(folder_path) and os.path.isdir(folder_path):
+        try:
+            shutil.rmtree(folder_path)
+            print(f"Deleted folder: {folder_path}")
+        except Exception as e:
+            print(f"Error deleting folder {folder_path}: {str(e)}")
+
+    # Now delete the sample from database
     db.delete(db_sample)
     db.commit()
 
     crud.create_user_log(db, int(user_id),
                          f"delete the sample preparation of: {id}",
                          details=details)
-    return {"message": f"SamplePreparation {id} deleted successfully."}
+    return {"message": f"SamplePreparation {id} and associated folders deleted successfully."}
 
 ######################
 # ImagingRecord CRUD #
