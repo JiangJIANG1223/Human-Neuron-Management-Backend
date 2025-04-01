@@ -3357,7 +3357,6 @@ def create_sample(sample: SamplePreparationSchema, Authorize: AuthJWT = Depends(
                          details=details)
     return db_sample
 
-
 @app.put("/api/sample_preparation/{id}", response_model=SamplePreparationSchema)
 def update_sample(id: int, sample: SamplePreparationSchema, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
     Authorize.jwt_required()
@@ -3390,17 +3389,20 @@ def update_sample(id: int, sample: SamplePreparationSchema, Authorize: AuthJWT =
 
 
 @app.delete("/api/sample_preparation/{id}")
-def delete_sample(id: int, Authorize: AuthJWT = Depends(),db: Session = Depends(get_db)):
+def delete_sample(id: int, Authorize: AuthJWT = Depends(), db: Session = Depends(get_db)):
     Authorize.jwt_required()
     user_id = Authorize.get_jwt_subject()
     db_sample = db.query(SamplePreparation).filter(SamplePreparation.id == id).first()
     if not db_sample:
         raise HTTPException(status_code=404, detail="Sample not found")
 
-    # 删除SamplePreparation会自动删除关联的ImagingRecord（由于cascade和ondelete设置）
+    # Get details before deleting
+    details = SamplePreparationSchema.from_orm(db_sample).json()
+
+    # Now delete the sample
     db.delete(db_sample)
     db.commit()
-    details = SamplePreparationSchema.from_orm(db_sample).json()
+
     crud.create_user_log(db, int(user_id),
                          f"delete the sample preparation of: {id}",
                          details=details)
