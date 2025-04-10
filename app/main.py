@@ -4309,7 +4309,6 @@ async def import_cell_table(
         imaging_id: str = Form(...),
         db: Session = Depends(get_db)
 ):
-    await complete_workflow(is_multicolor,sample_preparation_id,imaging_id, db)
     if imaging_id == '--':
         temp_dir = config.SAMPLE_PREPARATION_DIR_TEMPLATE.format(sample_id=sample_preparation_id)
     else:
@@ -4319,6 +4318,32 @@ async def import_cell_table(
         )
     config.ensure_dir(temp_dir)
     without_cell_id = os.path.join(temp_dir, "cell_without_cellID.csv")
+    if not os.path.exists(without_cell_id):
+        raise HTTPException(status_code=400, detail="请先点击preview进行检查，确保无误后再上传")
+
+    if imaging_id == '--':
+        apo_file = os.path.join(temp_dir, sample_preparation_id + '.apo')
+    else:
+        apo_file = os.path.join(temp_dir, sample_preparation_id + '-' + imaging_id + '.apo')
+    apo_path = apo_file  # 取第一个匹配的.apo文件
+    try:
+        apo_df = pd.read_csv(apo_path)
+        apo_row_count = len(apo_df)
+
+        # 检查CSV文件中的行数
+        csv_df = pd.read_csv(without_cell_id)
+        csv_row_count = len(csv_df)
+
+        # 比较两个文件的行数
+        if apo_row_count != csv_row_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"数据不一致：.apo文件包含{apo_row_count}个标注点，而cell_without_cellID.csv包含{csv_row_count}行。请先点击preview进行检查，数据可能存在问题。"
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"检查文件一致性时出错：{str(e)}")
+    await complete_workflow(is_multicolor,sample_preparation_id,imaging_id, db)
+
     with_cell_id = os.path.join(temp_dir, "cell_with_cellID.csv")
 
     # Check if the generated file exists
@@ -4327,11 +4352,7 @@ async def import_cell_table(
 
     # Read the CSV into a DataFrame
     final_df = pd.read_csv(without_cell_id)
-    if imaging_id == '--':
-        apo_file = os.path.join(temp_dir, sample_preparation_id + '.apo')
-    else:
-        apo_file = os.path.join(temp_dir, sample_preparation_id + '-' + imaging_id + '.apo')
-    apo_path = apo_file  # 取第一个匹配的.apo文件
+
     try:
         # Read the APO file and get row count
         if os.path.exists(apo_path):
