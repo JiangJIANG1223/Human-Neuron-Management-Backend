@@ -186,10 +186,14 @@ def extract_injection_columns(df):
     result_df = df.rename(columns={'file_name': 'injection_file', 'perfusion_user': 'perfusion_staff'})
 
     # List of columns to keep
+    # columns = [
+    #     'PTRS(B)', 'injection_file', 'sample_preparation_date', 'sample_preparation_staff',
+    #     'fresh_perfusion', 'slice_thickness','dye_name','experiment_temperature', 'perfusion_staff','ihc_category',
+    #     'immunohistochemistry', 'primaryAntibody_concentration', 'secondAntibody_band', 'DAPI_concentration'
+    # ]
     columns = [
         'PTRS(B)', 'injection_file', 'sample_preparation_date', 'sample_preparation_staff',
-        'fresh_perfusion', 'slice_thickness','dye_name','experiment_temperature', 'perfusion_staff','ihc_category',
-        'immunohistochemistry', 'primaryAntibody_concentration', 'secondAntibody_band', 'DAPI_concentration'
+        'fresh_perfusion', 'slice_thickness', 'experiment_temperature', 'perfusion_staff'
     ]
 
     # Filter to only include columns that exist in the DataFrame
