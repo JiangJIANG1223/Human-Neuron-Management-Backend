@@ -109,7 +109,6 @@ class HumanSingleCellTrackingTable(Base):
 class Sample_Information(Base):
     __tablename__ = "sample_information_20240815"
     idx = Column(Integer, primary_key=True, autoincrement=True)
-
     total_id = Column("总表编号", String(255))
     patient_id = Column("患者编号", String(255))
     sample_id = Column("样本编号", String(255))

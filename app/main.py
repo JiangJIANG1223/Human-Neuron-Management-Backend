@@ -56,8 +56,8 @@ from app.singleColor_cell_table import extract_sample_information, generate_cell
 from app.multicolor_cell_table import extract_imaging_and_injection_data as extract_multi_color_data
 from app.multicolor_cell_table import extract_imaging_and_injection_data_preview as extract_multi_color_data_preview
 
-# from . import config_local as config
-from . import config_spl as config
+from . import config_local as config
+# from . import config_spl as config
 # from . import config_fdzj as config
 app = FastAPI()
 
