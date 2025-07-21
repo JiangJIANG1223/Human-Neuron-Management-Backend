@@ -10,8 +10,8 @@ from datetime import datetime
 
 # MySQL 连接设置
 # DATABASE_URI = 'mysql+pymysql://root:braintell%40seu@localhost/human_neuron'
-# DATABASE_URI = 'mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron'
-DATABASE_URI = 'mysql+pymysql://root:wlj990521@10.194.35.182/hndb'
+DATABASE_URI = 'mysql+pymysql://root:hneuronbyseu123@localhost/human_neuron'
+# DATABASE_URI = 'mysql+pymysql://root:wlj990521@10.194.35.182/hndb'
 engine = db.create_engine(DATABASE_URI)
 Session = sessionmaker(bind=engine)
 session = Session()
