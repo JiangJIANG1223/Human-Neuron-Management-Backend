@@ -3,6 +3,7 @@ import csv
 import mimetypes
 import shutil
 from io import StringIO
+import struct
 
 import cv2
 import imageio
@@ -2734,6 +2735,59 @@ async def upload_injection_file(
     return response_data
 
 
+def read_v3d_header(filename):
+    """
+    读取v3d文件头信息，不加载图像数据
+
+    Returns:
+    --------
+    dict: 包含文件头信息的字典，或None如果出错
+    """
+    try:
+        with open(filename, 'rb') as f_obj:
+            # 读取格式键
+            len_formatkey = len('raw_image_stack_by_hpeng')
+            formatkey = f_obj.read(len_formatkey)
+            formatkey = struct.unpack(str(len_formatkey) + 's', formatkey)
+            if formatkey[0] != b'raw_image_stack_by_hpeng':
+                print("ERROR: File unrecognized (not raw, v3draw) or corrupted.")
+                return None
+
+            # 读取字节序
+            endiancode = f_obj.read(1)
+            endiancode = struct.unpack('c', endiancode)[0]
+            if endiancode != b'B' and endiancode != b'L':
+                print("ERROR: Only supports big- or little- endian.")
+                return None
+
+            # 读取数据类型
+            datatype = f_obj.read(2)
+            if endiancode == b'L':
+                datatype = struct.unpack('<h', datatype)[0]
+            else:
+                datatype = struct.unpack('>h', datatype)[0]
+
+            if datatype < 1 or datatype > 4:
+                print(f"ERROR: Unrecognized data type code [{datatype}].")
+                return None
+
+            # 读取图像尺寸 (X Y Z C)
+            size = f_obj.read(4 * 4)
+            if endiancode == b'L':
+                size = struct.unpack('<4l', size)
+            else:
+                size = struct.unpack('>4l', size)
+
+            return {
+                'endian': endiancode,
+                'datatype': datatype,
+                'size': size,
+                'header_size': f_obj.tell()
+            }
+    except Exception as e:
+        print(f"Error reading header: {e}")
+        return None
+
 imgdir = config.PTRSB_DB_DIR
 # imgdir = '/Users/wanglijun/PycharmProjects/PTRSB_DB'
 def soma_coord_transfer(apo_path,imgdir=imgdir,img_block_half_size=700):
@@ -2766,11 +2820,12 @@ def soma_coord_transfer(apo_path,imgdir=imgdir,img_block_half_size=700):
         print('No image data of ',ptrsbn)
         return outdf
     # start to crop
-    img=raw.load(imgpath)
-    img_c = img.shape[0] # channels
-    img_z = img.shape[1] # z-sclies
-    img_y = img.shape[2] # y
-    img_x = img.shape[3] # x
+    header = read_v3d_header(imgpath)
+    imgsize = header["size"]
+    img_c = header["size"][3]  # channels
+    img_z = header["size"][2]  # z-sclies
+    img_y = header["size"][1]  # y
+    img_x = header["size"][0]  # x
     i=0
     # print(img_c,img_x,img_y,img_z)
     for s in this_somas.index:
@@ -5030,6 +5085,144 @@ async def get_ptrs_list(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+###new swc management
+@app.get("/api/swc_versions/{cell_id}")
+async def get_swc_versions(cell_id: str, db: Session = Depends(get_db)):
+    """Get all available SWC versions for a specific cell."""
+    # Get cell record to verify it exists
+    cell = db.query(models.HumanSingleCellTrackingTable).filter(
+        models.HumanSingleCellTrackingTable.cell_id == cell_id
+    ).first()
+
+    if not cell:
+        raise HTTPException(status_code=404, detail="Cell not found")
+
+    # Determine the base path for SWC files
+    base_swc_dir = os.path.join(config.NFS_BASE, "SWC_Files", cell_id)
+
+    versions = []
+    # Check if directory exists
+    if os.path.exists(base_swc_dir):
+        # First check for the default version (auto_v1.4)
+        if cell.swc_auto14:
+            versions.append({
+                "version_id": "auto_v1.4",
+                "display_name": "Auto v1.4 (Default)",
+                "path": cell.swc_auto14,
+                "is_default": True
+            })
+
+        # Look for other version directories
+        try:
+            for item in os.listdir(base_swc_dir):
+                item_path = os.path.join(base_swc_dir, item)
+                if os.path.isdir(item_path) and item != "auto_v1.4":
+                    swc_file = os.path.join(item_path, f"{cell_id}.swc")
+                    if os.path.exists(swc_file):
+                        versions.append({
+                            "version_id": item,
+                            "display_name": f"Version: {item}",
+                            "path": swc_file,
+                            "is_default": False
+                        })
+        except Exception as e:
+            print(f"Error reading SWC directory for cell {cell_id}: {e}")
+
+    return {"versions": versions}
+
+
+@app.get("/api/download_swc/{cell_id}/{version_id}")
+async def download_swc(
+        cell_id: str,
+        version_id: str,
+        db: Session = Depends(get_db)
+):
+    """Download a specific SWC file."""
+    # Get cell record to verify it exists
+    cell = db.query(models.HumanSingleCellTrackingTable).filter(
+        models.HumanSingleCellTrackingTable.cell_id == cell_id
+    ).first()
+
+    if not cell:
+        raise HTTPException(status_code=404, detail="Cell not found")
+
+    # Get the SWC file path based on version
+    swc_path = None
+    if version_id == "auto_v1.4":
+        swc_path = cell.swc_auto14
+    else:
+        # For custom versions, construct the path
+        base_swc_dir = os.path.join(config.NFS_BASE, "SWC_Files", cell_id)
+        swc_path = os.path.join(base_swc_dir, version_id, f"{cell_id}.swc")
+
+    if not swc_path or not os.path.exists(swc_path):
+        raise HTTPException(status_code=404, detail="SWC file not found")
+
+    # Return the file for download
+    return FileResponse(
+        swc_path,
+        media_type="application/octet-stream",
+        filename=f"{cell_id}_{version_id}.swc"
+    )
+
+
+@app.post("/api/batch_download_swc")
+async def batch_download_swc(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        db: Session = Depends(get_db)
+):
+    """Batch download multiple SWC files as a zip."""
+    data = await request.json()
+    cell_ids = data.get("cell_ids", [])
+    version_id = data.get("version_id", "auto_v1.4")
+
+    if not cell_ids:
+        raise HTTPException(status_code=400, detail="No cell IDs provided")
+
+    # Create a temporary directory for zip files
+    temp_dir = config.TEMP_DIR
+    os.makedirs(temp_dir, exist_ok=True)
+
+    zip_filename = f"swc_batch_{version_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}.zip"
+    zip_path = os.path.join(temp_dir, zip_filename)
+
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for cell_id in cell_ids:
+            cell = db.query(models.HumanSingleCellTrackingTable).filter(
+                models.HumanSingleCellTrackingTable.cell_id == cell_id
+            ).first()
+
+            if not cell:
+                continue
+
+            swc_path = None
+            if version_id == "auto_v1.4":
+                swc_path = cell.swc_auto14
+            else:
+                # For custom versions, construct the path
+                base_swc_dir = os.path.join(config.NFS_BASE, "SWC_Files", cell_id)
+                swc_path = os.path.join(base_swc_dir, version_id, f"{cell_id}.swc")
+
+            if swc_path and os.path.exists(swc_path):
+                zip_file.write(swc_path, f"{cell_id}/{version_id}/{cell_id}.swc")
+
+    # Function to clean up the temporary file after it's been sent
+    def cleanup():
+        try:
+            os.remove(zip_path)
+        except Exception as e:
+            print(f"Error removing temporary file {zip_path}: {e}")
+
+    # Add cleanup task
+    background_tasks.add_task(cleanup)
+
+    # Return the ZIP file
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=zip_filename
+    )
 
 ### LLMs 部分
 
